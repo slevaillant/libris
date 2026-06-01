@@ -3,13 +3,19 @@
 # Rule 3: tests must pass before every commit
 npm run test
 
-# Rule 1: if a migration file was staged, regenerate Supabase types
+# Rule 1: if a migration file was staged, remind to regenerate Supabase types
 if git diff --cached --name-only | grep -q "supabase/migrations/"; then
-  echo "Migration detected — regenerating Supabase types..."
-  npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm \
-    > src/integrations/supabase/types.ts
-  git add src/integrations/supabase/types.ts
-  echo "Types regenerated and staged."
+  if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+    echo "Migration detected — regenerating Supabase types..."
+    npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm \
+      > src/integrations/supabase/types.ts
+    git add src/integrations/supabase/types.ts
+    echo "Types regenerated and staged."
+  else
+    echo ""
+    echo "Migration detected — remember to regenerate types:"
+    echo "  SUPABASE_ACCESS_TOKEN=your-token npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm > src/integrations/supabase/types.ts"
+  fi
 fi
 
 # Rule 2: if agent/server files changed without docs/PROMPTS.md, warn
