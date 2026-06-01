@@ -51,7 +51,8 @@ type NudgeInput = {
 ### Tools available to Orchestrator
 ```typescript
 extract_nudge_themes      // Haiku: extract topics from query text
-check_memory_cache        // pgvector: similarity search in user_memories
+check_memory_cache        // pgvector: semantic_cache similarity search only
+load_session_memories     // SQL: direct in-context load of episodic/preference/pattern
 search_knowledge_base     // RAG: parallel search across source types
 synthesise_response       // Opus: build Lumen response from retrieved chunks
 store_nudge_memory        // async: write new memory after response
@@ -266,10 +267,12 @@ before and after each nudge, and by the weekly pattern analysis cron.
 ```typescript
 Input:  { userId: string }
 Output: {
-  episodic: string;        // natural language summary of last 5 episodes
-  preferences: string;     // user preference facts block (~300 tokens)
-  patterns: string;        // detected patterns relevant to time of day
+  episodic: string;        // natural language block of last 20 episodes (in-context, no embedding)
+  preferences: string;     // user preference facts block (~300 tokens, in-context)
+  patterns: string;        // detected patterns relevant to time of day (in-context)
 }
+// Retrieval method: direct SQL load (no pgvector) — all three types fit in ~4,000 tokens
+// See MEMORY.md — Karpathy in-context principle applies here
 ```
 
 **write_episodic_memory** — called after each nudge (async)

@@ -180,8 +180,9 @@ create table public.user_memories (
                                   'semantic_cache', 'episodic', 'preference', 'pattern'
                                 )),
   content           text        not null,         -- natural language summary of the memory
-  embedding         vector(1536),                 -- for similarity search against new nudges
-  source_query      text,                         -- original nudge that created this memory
+  -- embedding only populated for semantic_cache — other types loaded in-context (see MEMORY.md)
+  embedding         vector(1536),
+  source_query      text,                         -- original nudge (semantic_cache only)
   response_summary  text,                         -- cached response (semantic_cache only)
   citations_used    jsonb,                         -- [{source_id, title, chapter, chunk_id}]
   times_referenced  int         not null default 0,
@@ -193,7 +194,9 @@ create table public.user_memories (
 );
 alter table public.user_memories enable row level security;
 create policy "own memories" on public.user_memories for all using (user_id = auth.uid());
-create index on public.user_memories using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+-- Partial index: pgvector only on semantic_cache rows — episodic/preference/pattern use in-context loading
+create index on public.user_memories using ivfflat (embedding vector_cosine_ops)
+  with (lists = 50) where memory_type = 'semantic_cache';
 create index on public.user_memories (user_id, memory_type);
 create index on public.user_memories (user_id, last_referenced desc);
 ```
