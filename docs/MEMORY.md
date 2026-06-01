@@ -113,6 +113,53 @@ Over time, the digest agent learns when and about what the user tends to ask:
 
 ---
 
+## Retrieval Strategy — Karpathy Principle Applied
+
+The memory layer uses **two different retrieval strategies** depending on the memory type.
+This is the key architectural decision: don't use the same tool for every problem.
+
+### In-context loading (episodic, preference, pattern)
+
+These memory types are small — 50–100 entries maximum, ~3,000–5,000 tokens total.
+Rather than embedding-searching them (which introduces approximation), load them ALL
+directly into L3 context and let the model's attention mechanism do the work.
+
+This is Karpathy's "lean" principle: the model reading actual text is strictly better
+than retrieving by embedding similarity. Only use a vector database when you have a
+scale problem that forces you to.
+
+```typescript
+// Load all non-expired memories directly into context — no embedding needed
+const memories = await supabase
+  .from("user_memories")
+  .select("memory_type, content, created_at, times_referenced")
+  .eq("user_id", userId)
+  .neq("memory_type", "semantic_cache")      // semantic_cache handled separately
+  .gt("confidence", 0.3)
+  .order("last_referenced", { ascending: false })
+  .limit(60);                                 // ~4,000 tokens — fits in L3
+
+// Inject as structured text into L3 context
+const memoryBlock = formatMemoriesForContext(memories);
+```
+
+### pgvector search (semantic_cache only)
+
+The semantic cache (M1) is the one memory type where embedding similarity is the
+right tool — because the question IS "is this new query similar to a past query?"
+That is genuinely a nearest-neighbour problem.
+
+```typescript
+// Semantic cache check — the only memory that uses pgvector
+const cacheHit = await supabase.rpc("match_memories", {
+  p_user_id: userId,
+  p_query_embedding: queryEmbedding,
+  p_min_score: 0.92
+});
+```
+
+---
+
 ## Database Schema
 
 ```sql
@@ -123,22 +170,26 @@ create table public.user_memories (
                                   memory_type in ('semantic_cache', 'episodic', 'preference', 'pattern')
                                 ),
   content           text        not null,   -- natural language description of the memory
-  embedding         vector(1536),            -- for semantic search against new nudges
-  source_query      text,                    -- original nudge that created this memory
-  response_summary  text,                    -- cached response (for semantic_cache type only)
-  citations_used    jsonb,                   -- {source_id, title, chapter}[] (for semantic_cache)
+  -- embedding only populated for semantic_cache entries
+  embedding         vector(1536),
+  source_query      text,                    -- original nudge (semantic_cache only)
+  response_summary  text,                    -- cached response (semantic_cache only)
+  citations_used    jsonb,                   -- [{source_id, title, chapter}] (semantic_cache only)
   times_referenced  int         not null default 0,
   last_referenced   timestamptz,
-  confidence        float       not null default 1.0, -- decays over time for pattern/preference
-  expires_at        timestamptz,             -- null = permanent
+  confidence        float       not null default 1.0,
+  expires_at        timestamptz,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
 
+-- pgvector index only needed for semantic_cache entries
 create index on public.user_memories using ivfflat (embedding vector_cosine_ops)
-  with (lists = 100);
+  with (lists = 50)
+  where memory_type = 'semantic_cache';     -- partial index — only where needed
+
 create index on public.user_memories (user_id, memory_type);
-create index on public.user_memories (user_id, last_referenced);
+create index on public.user_memories (user_id, last_referenced desc);
 
 alter table public.user_memories enable row level security;
 create policy "own memories" on public.user_memories
@@ -149,21 +200,23 @@ create policy "own memories" on public.user_memories
 
 ## Memory Retrieval — Per-Call Protocol
 
-Every agent call follows this sequence:
-
 ```
-1. Load preference memories (M3) → inject into L2 cache
-   Cost: 0 tokens if cached, ~300 tokens on cache miss
+1. Load preference + pattern memories → inject into L2 (cached block)
+   Method: direct SQL load, no embedding
+   Cost: ~500 tokens, cached after first call in session → effectively free
 
-2. Load episodic memories (M2) → inject into L3
-   Cost: ~500 tokens (top 5 recent episodes)
+2. Load episodic memories → inject into L3
+   Method: direct SQL load, top 20 by recency, no embedding
+   Cost: ~1,000 tokens per session
 
-3. Check semantic cache (M1) → if hit, skip steps 4–6
-   Cost: 1 embedding call + 1 pgvector query
+3. Check semantic cache (M1) → embedding similarity search
+   Method: pgvector match_memories RPC
+   Cost: 1 Gemini embedding call + 1 pgvector query
 
-4. RAG search (full pipeline)
-5. Synthesis (Opus)
-6. Store new memory (M1 + M2 update, async)
+4a. CACHE HIT  → Haiku enrichment → return (~800 tokens total)
+4b. CACHE MISS → full RAG pipeline (~8,000 tokens total)
+
+5. Store memories async (non-blocking — never delays response)
 ```
 
 ---
