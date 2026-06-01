@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# Rule 3: tests must pass before every commit
+npm run test
+
+# Rule 1: if a migration file was staged, regenerate Supabase types
+if git diff --cached --name-only | grep -q "supabase/migrations/"; then
+  echo "Migration detected — regenerating Supabase types..."
+  npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm \
+    > src/integrations/supabase/types.ts
+  git add src/integrations/supabase/types.ts
+  echo "Types regenerated and staged."
+fi
+
+# Rule 2: if agent/server files changed without docs/PROMPTS.md, warn
+PROMPT_FILES=$(git diff --cached --name-only | grep -cE "src/(agents|server)/.*\.(ts|tsx)$" || true)
+PROMPTS_DOC=$(git diff --cached --name-only | grep -c "docs/PROMPTS.md" || true)
+
+if [ "$PROMPT_FILES" -gt 0 ] && [ "$PROMPTS_DOC" -eq 0 ]; then
+  echo ""
+  echo "WARNING: agent/server files changed but docs/PROMPTS.md was not updated."
+  echo "If you changed a system prompt, update docs/PROMPTS.md first."
+  echo "Press Enter to commit anyway, or Ctrl+C to abort."
+  read -r _
+fi
