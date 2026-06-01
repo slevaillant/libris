@@ -201,3 +201,77 @@ Never start a phase until the previous one is fully working in production.
 - **Verify the prompt cache** — after any prompt change, confirm cache hits in Anthropic usage dashboard
 - **Never log content** — enforce via code review on every PR (see SECURITY.md)
 - **Measure tokens per nudge** — track `nudges.tokens_used` from Phase 6 onwards
+
+---
+
+## Testing Strategy
+
+### Layer 1 — Unit tests (Vitest) — `npm run test`
+Run on every commit. Test pure logic with no external dependencies.
+
+What to cover per phase:
+- **Phase 1**: RLS policy logic (simulate two users, verify isolation)
+- **Phase 2**: Auth flow helpers, user profile defaults
+- **Phase 3–4**: Chunking algorithms, deduplication logic, chapter summary prompts
+- **Phase 5**: Highlight authority ranking
+- **Phase 6**: Memory decay calculations, relevance scoring, prompt assembly, cache threshold logic
+- **Phase 7**: RSS parsing, GitHub content extraction, Readability stripping
+- **Phase 9**: `extract_meeting_themes` anonymisation (no proper nouns in output)
+
+### Layer 2 — Integration tests (Vitest + real Supabase)
+Run before every deploy. Use the service key against the real DB.
+
+```bash
+# Add to package.json scripts:
+"test:integration": "vitest run --project integration"
+```
+
+What to cover:
+- Every new RPC: call it, verify output shape
+- RLS: create two test users, verify neither sees the other's data
+- `match_chunks`: insert a test chunk, embed it, verify it's retrievable
+- `match_memories`: insert a semantic_cache entry, verify similarity search returns it
+
+### Layer 3 — E2E tests (Playwright) — `npm run test:e2e`
+Run weekly or before major releases. Test critical user flows in a real browser.
+
+Critical flows to cover:
+- Sign in → redirect to library (Phase 2)
+- Add a book → appears in library with correct status (Phase 3)
+- Type a nudge → response contains at least one citation (Phase 6)
+- Digest settings save → reflected on next digest run (Phase 9)
+
+### Regression prevention rules
+1. Never merge a change that breaks `npm run test`
+2. After every migration: regenerate types → `npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm > src/integrations/supabase/types.ts`
+3. After every prompt change: update `docs/PROMPTS.md` to match
+4. After every agent change: update `docs/AGENT_CONTRACTS.md` to match
+
+---
+
+## Maintenance Checklist
+
+### After every migration
+```bash
+npx supabase gen types typescript --project-id orzkyfdixfckawtmoyvm > src/integrations/supabase/types.ts
+git add src/integrations/supabase/types.ts && git commit -m "chore: regenerate supabase types"
+```
+
+### Weekly (from Phase 6 onwards)
+- Check `nudges.tokens_used` average — spike = something changed in the pipeline
+- Check `sources.ingest_status = 'failed'` count — any failures need investigation
+- Check digest email delivery rate
+
+### Monthly
+```bash
+npm outdated          # review available updates
+npm update            # apply patch versions safely
+```
+Review: Anthropic SDK, Cloudflare Workers plugin, TanStack Start — these move fast.
+
+### Before every production deploy
+```bash
+npm run test          # unit tests must pass
+npm run build         # build must be clean
+npm run lint          # no lint errors
+```
