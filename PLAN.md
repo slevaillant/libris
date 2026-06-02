@@ -88,6 +88,24 @@ Never start a phase until the previous one is fully working in production.
 - [ ] Highlight chunk embedded immediately (not via Workflow — fast path)
 - [ ] Verify: highlight outranks AI chapter summary in `match_chunks` (authority_tier = 1)
 
+### Highlight import paths (for future sprints)
+Manual entry (paste a quote) is the Phase 5 baseline. These richer import paths should be added once manual highlights are working:
+
+**Kindle — `My Clippings.txt` (recommended first)**
+- Connect Kindle via USB → parse the plain-text `My Clippings.txt` file on the device
+- Format is well-documented and consistent; an afternoon of work to build a parser
+- Matches highlights to existing sources by title/author, creates highlight records in bulk
+- No third-party dependency, works offline
+
+**Readwise API (most powerful)**
+- Readwise aggregates Kindle, iBooks, Instapaper, Pocket, and more into one API
+- If user already uses Readwise, one integration covers all sources at once
+- Requires a Readwise account and API key
+- Best long-term option if the user is already in the Readwise ecosystem
+
+**`read.amazon.com` scraping (avoid)**
+- Amazon's website shows Kindle highlights but scraping is fragile and against ToS
+
 ---
 
 ## Phase 6 — On-Demand Nudge (RAG Chat)
