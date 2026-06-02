@@ -12,8 +12,7 @@ function Index() {
 
   useEffect(() => {
     if (loading) return;
-    if (session) navigate({ to: "/library" });
-    else navigate({ to: "/login" });
+    navigate({ to: session ? "/library" : "/login" });
   }, [session, loading, navigate]);
 
   return (
