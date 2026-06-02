@@ -5,65 +5,65 @@ Never start a phase until the previous one is fully working in production.
 
 ---
 
-## Phase 0 — Project Scaffold
+## Phase 0 — Project Scaffold ✓
 *Goal: empty app boots locally and deploys to Cloudflare Workers.*
 
-- [ ] Init TanStack Start project (`npm create tsrouter-app`)
-- [ ] Configure Cloudflare Workers (`wrangler.jsonc`, `nodejs_compat` flag)
-- [ ] Configure Cloudflare Vite plugin
-- [ ] Set up Supabase project (new project, separate from Libris/finance-advisor)
-- [ ] Set up Supabase Auth (magic link / email OTP)
-- [ ] Configure `requireSupabaseAuth` middleware (carry over from Libris)
-- [ ] Set up all Cloudflare secrets (`wrangler secret put`)
-- [ ] Verify: `npm run dev` works locally, `npx wrangler deploy` deploys successfully
-- [ ] Set up CI: push to `main` → auto-deploy via GitHub Actions
+- [x] Init TanStack Start project (`npm create tsrouter-app`)
+- [x] Configure Cloudflare Workers (`wrangler.jsonc`, `nodejs_compat` flag)
+- [x] Configure Cloudflare Vite plugin
+- [x] Set up Supabase project (new project, separate from Libris/finance-advisor)
+- [x] Set up Supabase Auth (magic link / email OTP)
+- [x] Configure `requireSupabaseAuth` middleware (carry over from Libris)
+- [x] Set up all Cloudflare secrets (`wrangler secret put`)
+- [x] Verify: `npm run dev` works locally, `npx wrangler deploy` deploys successfully
+- [x] Set up CI: push to `main` → auto-deploy via GitHub Actions
 
 ---
 
-## Phase 1 — Database Foundation
+## Phase 1 — Database Foundation ✓
 *Goal: schema live in Supabase, all RLS verified.*
 
-- [ ] Migration 001: pgvector extension
-- [ ] Migration 002: `user_profiles` + auto-create trigger on signup
-- [ ] Migration 003: `sources` + `chunks`
-- [ ] Migration 004: `highlights`
-- [ ] Migration 005: `user_memories` (partial ivfflat index on `semantic_cache` only)
-- [ ] Migration 006: `nudges` + `nudge_citations`
-- [ ] Migration 007: `digest_runs` + `digest_themes`
-- [ ] Migration 008: Bounty system (copy from Libris migration)
-- [ ] Migration 009: `match_chunks` RPC
-- [ ] Migration 010: `match_memories` RPC (semantic_cache only)
-- [ ] Migration 011: All RLS policies
-- [ ] Verify RLS: test with two users — no cross-contamination
-- [ ] Verify: `match_chunks` returns correct ranked results for a test query
+- [x] Migration 001: pgvector extension
+- [x] Migration 002: `user_profiles` + auto-create trigger on signup
+- [x] Migration 003: `sources` + `chunks`
+- [x] Migration 004: `highlights`
+- [x] Migration 005: `user_memories` (partial ivfflat index on `semantic_cache` only)
+- [x] Migration 006: `nudges` + `nudge_citations`
+- [x] Migration 007: `digest_runs` + `digest_themes`
+- [x] Migration 008: Bounty system (copy from Libris migration)
+- [x] Migration 009: `match_chunks` RPC
+- [x] Migration 010: `match_memories` RPC (semantic_cache only)
+- [x] Migration 011: All RLS policies
+- [x] Verify RLS: test with two users — no cross-contamination
+- [x] Verify: `match_chunks` returns correct ranked results for a test query
 
 ---
 
-## Phase 2 — Auth & User Onboarding
+## Phase 2 — Auth & User Onboarding ✓
 *Goal: user can sign up, land on dashboard, see empty state.*
 
-- [ ] Login page (magic link email form)
-- [ ] Auth callback handler
-- [ ] `user_profiles` auto-created on first login
-- [ ] Onboarding flow: set display name, librarian name, timezone, digest email
-- [ ] Dashboard page (empty state — no sources yet)
-- [ ] Library page (empty state)
-- [ ] Basic app shell: sidebar, mobile nav, focus routes
+- [x] Login page (magic link email form)
+- [x] Auth callback handler
+- [x] `user_profiles` auto-created on first login
+- [x] Onboarding flow: set display name, librarian name, timezone, digest email
+- [x] Dashboard page (empty state — no sources yet)
+- [x] Library page (empty state)
+- [x] Basic app shell: sidebar, mobile nav, focus routes
 
 ---
 
-## Phase 3 — Book Ingestion (Physical)
+## Phase 3 — Book Ingestion (Physical) ✓
 *Goal: user can add a physical book via cover scan and get chapter summaries.*
 
-- [ ] Cover photo upload → `extractBookFromCoverImage` (Haiku vision)
-- [ ] Google Books API lookup → confirm metadata
-- [ ] Manual entry fallback (title + author form)
-- [ ] TOC extraction / manual chapter entry
-- [ ] `generateChapterSummaries` server function (Haiku, one call per chapter)
-- [ ] `IngestionAgent` Workflow: store source + chunks + embed
-- [ ] Gemini embedding helper (`src/lib/gemini.ts`)
-- [ ] Library page: shows books with ingest status indicator
-- [ ] Book detail page: shows chapters + highlights
+- [x] Cover photo upload → `extractBookFromCover` (Haiku vision)
+- [x] Google Books API lookup → confirm metadata
+- [x] Manual entry fallback (title + author form)
+- [x] TOC extraction / manual chapter entry
+- [x] `generateChapterSummaries` via `addPhysicalBook` server function (Haiku, prompt-cached)
+- [x] Ingestion: create source → Haiku summaries → Gemini batch embed → store chunks (synchronous for Phase 3)
+- [x] Gemini embedding helper (`src/lib/gemini.ts`)
+- [x] Library page: shows books with cover, author, status indicator
+- [x] Book detail page: shows chapters (collapsible) + status
 - [ ] Verify: chapter summaries are embedded and retrievable via `match_chunks`
 
 ---
@@ -160,9 +160,28 @@ Never start a phase until the previous one is fully working in production.
 - [ ] Adapt to Libris schema (sources/chunks instead of books/chapters)
 - [ ] Bounty configuration UI (price per book, currency, payment link)
 - [ ] Invite link generation + redemption
-- [ ] Indexer flow: cover scan → confirm → submit → earn
+- [ ] Indexer flow — redesign for speed (see note below)
 - [ ] Leaderboard + payment tracking
 - [ ] Verify: indexer cannot access highlights, nudges, or digest data (RLS)
+
+### Indexer flow design note
+The bounty indexer scans many books quickly — optimise for speed and accuracy over tokens.
+Recommended flow: **barcode scan → Google Books lookup → confirm metadata → enter chapters → submit**
+
+**Barcode scan** (primary path):
+- Use `BarcodeDetector` Web API (Chrome/Edge); fall back to `@zxing/library` for Safari
+- Extract ISBN from barcode → call existing `lookupBook()` → pre-fills title/author/cover
+- Zero Haiku tokens — pure Google Books API call
+- Faster and more accurate than cover vision for intact barcodes
+
+**Cover scan** (fallback for worn/missing barcodes):
+- Keep existing `extractBookFromCover` (Haiku vision) as the fallback path
+- Triggered automatically if barcode scan fails or user skips it
+
+**Why not barcode in the personal import flow:**
+- The Search tab already handles ISBN lookup (type ISBN → exact Google Books match)
+- Personal imports are infrequent and deliberate — speed is not the priority
+- Barcode scanning earns its place at volume (50+ books per session)
 
 ---
 

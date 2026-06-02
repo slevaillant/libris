@@ -14,6 +14,8 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedLibraryRouteImport } from './routes/_authenticated/library'
+import { Route as AuthenticatedImportRouteImport } from './routes/_authenticated/import'
+import { Route as AuthenticatedBookIdRouteImport } from './routes/_authenticated/book.$id'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -39,39 +41,63 @@ const AuthenticatedLibraryRoute = AuthenticatedLibraryRouteImport.update({
   path: '/library',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedImportRoute = AuthenticatedImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedBookIdRoute = AuthenticatedBookIdRouteImport.update({
+  id: '/book/$id',
+  path: '/book/$id',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/import': typeof AuthenticatedImportRoute
   '/library': typeof AuthenticatedLibraryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/book/$id': typeof AuthenticatedBookIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/import': typeof AuthenticatedImportRoute
   '/library': typeof AuthenticatedLibraryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/book/$id': typeof AuthenticatedBookIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
+  '/_authenticated/import': typeof AuthenticatedImportRoute
   '/_authenticated/library': typeof AuthenticatedLibraryRoute
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/_authenticated/book/$id': typeof AuthenticatedBookIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/library' | '/onboarding'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/import'
+    | '/library'
+    | '/onboarding'
+    | '/book/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/library' | '/onboarding'
+  to: '/' | '/login' | '/import' | '/library' | '/onboarding' | '/book/$id'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/login'
+    | '/_authenticated/import'
     | '/_authenticated/library'
     | '/_authenticated/onboarding'
+    | '/_authenticated/book/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -117,17 +143,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedLibraryRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/import': {
+      id: '/_authenticated/import'
+      path: '/import'
+      fullPath: '/import'
+      preLoaderRoute: typeof AuthenticatedImportRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/book/$id': {
+      id: '/_authenticated/book/$id'
+      path: '/book/$id'
+      fullPath: '/book/$id'
+      preLoaderRoute: typeof AuthenticatedBookIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
+  AuthenticatedImportRoute: typeof AuthenticatedImportRoute
   AuthenticatedLibraryRoute: typeof AuthenticatedLibraryRoute
   AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
+  AuthenticatedBookIdRoute: typeof AuthenticatedBookIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedImportRoute: AuthenticatedImportRoute,
   AuthenticatedLibraryRoute: AuthenticatedLibraryRoute,
   AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
+  AuthenticatedBookIdRoute: AuthenticatedBookIdRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

@@ -36,15 +36,14 @@ libris/
       rag.agent.ts               ← Semantic search + passage selection
       ingestion.agent.ts         ← Document processing pipeline
       digest.agent.ts            ← Daily Granola analysis + email
-    server/
-      chat.functions.ts          ← On-demand nudge server functions
-      import.functions.ts        ← Source ingestion server functions
-      library.functions.ts       ← Library CRUD
-      bounty.functions.ts        ← Bounty system (from Libris)
-      digest.functions.ts        ← Digest preferences + history
     lib/
       supabase.ts                ← Supabase client factory
       gemini.ts                  ← Embedding helper
+      library.functions.ts       ← Library CRUD (createServerFn)
+      profile.functions.ts       ← User profile (createServerFn)
+      chat.functions.ts          ← On-demand nudge server functions (createServerFn)
+      bounty.functions.ts        ← Bounty system (createServerFn)
+      digest.functions.ts        ← Digest preferences + history (createServerFn)
       chunking.ts                ← Source-type-aware chunking
       granola.ts                 ← Granola MCP client wrapper
       sources/
@@ -98,7 +97,7 @@ OrchestratorAgent (Durable Object, opus-4-7)
 
 ## Coding Conventions
 
-- **Server functions**: `createServerFn` + `.middleware([requireSupabaseAuth])` + Zod input validator
+- **Server functions**: `createServerFn` + `.middleware([requireSupabaseAuth])` + Zod input validator — always in `src/lib/`, never `src/server/` (TanStack Start blocks client imports from any `**/server/**` path)
 - **All Claude calls**: `@anthropic-ai/sdk` — never raw `fetch` to `api.anthropic.com`
 - **Prompt caching**: ALWAYS `cache_control: {type: "ephemeral"}` on L1 and L2 context layers
 - **Tool use**: ALL structured outputs use `tool_choice: {type: "tool", name: "..."}` — no freeform parsing

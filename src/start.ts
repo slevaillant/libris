@@ -15,7 +15,24 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
   }
 });
 
+// Logs server function errors to the terminal so they're visible during dev.
+const fnErrorLogger = createMiddleware({ type: "function" }).server(
+  async ({ next }) => {
+    try {
+      return await next();
+    } catch (error) {
+      if (error instanceof Response) {
+        const body = await error.clone().text().catch(() => "(unreadable)");
+        console.error("[serverFn error]", error.status, body);
+      } else {
+        console.error("[serverFn error]", error);
+      }
+      throw error;
+    }
+  },
+);
+
 export const startInstance = createStart(() => ({
   requestMiddleware: [errorMiddleware],
-  functionMiddleware: [attachSupabaseAuth],
+  functionMiddleware: [attachSupabaseAuth, fnErrorLogger],
 }));
