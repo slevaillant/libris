@@ -69,13 +69,14 @@ Never start a phase until the previous one is fully working in production.
 ---
 
 ## Phase 4 — Book Ingestion (Digital)
-*Goal: user can upload a PDF or ePub and have it fully indexed.*
+*Goal: user can upload a PDF or ePub and have it fully indexed; or scan a Kindle library screenshot to bulk-add ebooks.*
 
-- [ ] PDF upload → `pdf-parse` → chunk by paragraph
-- [ ] ePub upload → parse → chunk by section
+- [ ] PDF upload → `pdfjs-dist` (client-side) → chunk by paragraph
+- [ ] ePub upload → JSZip parse (client-side) → chunk by section
 - [ ] Scanned PDF detection → fall back to physical book flow
-- [ ] Deduplication check (ISBN / URL match before re-ingesting)
-- [ ] Import page: drag-and-drop upload + progress indicator
+- [ ] Deduplication check (ISBN / title+author match before re-ingesting)
+- [ ] Import page: mode selector (Physical / Digital / Kindle) + drag-and-drop + progress
+- [ ] Kindle library screenshot import: upload 1+ screenshots → Haiku vision extracts book list → user reviews → bulk ingest via Google Books + AI chapter summaries
 - [ ] Verify: uploaded PDF chunks retrievable with correct page numbers
 
 ---

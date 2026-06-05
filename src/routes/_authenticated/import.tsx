@@ -1,7 +1,20 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState } from "react";
-import { ArrowLeft, BookOpen, Camera, Search, PenLine, Loader2, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Camera,
+  Search,
+  PenLine,
+  Loader2,
+  Sparkles,
+  Upload,
+  Smartphone,
+  CheckCircle2,
+  XCircle,
+  Circle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,17 +24,27 @@ import {
   lookupBook,
   suggestChapters,
   addPhysicalBook,
+  extractKindleLibrary,
+  addDigitalBook,
+  addKindleBook,
+  checkDuplicate,
   type BookCandidate,
 } from "@/lib/library.functions";
+import type { PdfExtractResult } from "@/lib/sources/pdf";
+import type { EpubExtractResult } from "@/lib/sources/epub";
 
 export const Route = createFileRoute("/_authenticated/import")({
-  component: ImportBook,
+  component: ImportPage,
 });
 
-// ─── Step types ───────────────────────────────────────────────────────────────
+// ─── Top-level mode ────────────────────────────────────────────────────────────
 
-type Method = "search" | "scan" | "manual";
-type Step = "identify" | "review";
+type ImportMode = "physical" | "digital" | "kindle";
+
+// ─── Shared types ──────────────────────────────────────────────────────────────
+
+type PhysicalMethod = "search" | "scan" | "manual";
+type PhysicalStep = "identify" | "review";
 
 type Draft = {
   title: string;
@@ -33,17 +56,96 @@ type Draft = {
 };
 
 const emptyDraft = (): Draft => ({
-  title: "", author: "", isbn: "", coverUrl: "", description: "", shelfLocation: "",
+  title: "",
+  author: "",
+  isbn: "",
+  coverUrl: "",
+  description: "",
+  shelfLocation: "",
 });
 
-// ─── Step 1: Identify ────────────────────────────────────────────────────────
+// ─── Mode selector ─────────────────────────────────────────────────────────────
 
-function IdentifyStep({
+function ModeSelector({ onSelect }: { onSelect: (m: ImportMode) => void }) {
+  const modes: {
+    id: ImportMode;
+    icon: React.ElementType;
+    label: string;
+    description: string;
+  }[] = [
+    {
+      id: "physical",
+      icon: BookOpen,
+      label: "Physical book",
+      description: "Search by title, scan cover, or enter manually",
+    },
+    {
+      id: "digital",
+      icon: Upload,
+      label: "PDF or ePub",
+      description: "Upload an ebook file to index its full content",
+    },
+    {
+      id: "kindle",
+      icon: Smartphone,
+      label: "Kindle library",
+      description: "Screenshot your Kindle library to bulk-add books",
+    },
+  ];
+
+  return (
+    <div className="space-y-2">
+      {modes.map(({ id, icon: Icon, label, description }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onSelect(id)}
+          className="flex w-full items-center gap-3 rounded-lg border border-border p-3.5 text-left hover:bg-accent/50 active:scale-[0.98] active:bg-accent/70 transition-all cursor-pointer select-none"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+            <Icon className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-xs font-medium">{label}</p>
+            <p className="text-[10px] text-muted-foreground">{description}</p>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Physical book flow (unchanged from Phase 3) ──────────────────────────────
+
+function PhysicalFlow({ onBack }: { onBack: () => void }) {
+  const [step, setStep] = useState<PhysicalStep>("identify");
+  const [draft, setDraft] = useState<Draft>(emptyDraft());
+
+  return (
+    <>
+      {step === "identify" ? (
+        <PhysicalIdentifyStep
+          onContinue={(d) => {
+            setDraft(d);
+            setStep("review");
+          }}
+          onBack={onBack}
+        />
+      ) : (
+        <PhysicalReviewStep draft={draft} onBack={() => setStep("identify")} />
+      )}
+    </>
+  );
+}
+
+function PhysicalIdentifyStep({
   onContinue,
+  onBack,
 }: {
   onContinue: (draft: Draft) => void;
+  onBack: () => void;
 }) {
-  const [method, setMethod] = useState<Method>("search");
+  const [method, setMethod] = useState<PhysicalMethod>("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<BookCandidate[]>([]);
   const [searching, setSearching] = useState(false);
@@ -81,22 +183,14 @@ function IdentifyStep({
   const handleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const mimeType = file.type as "image/jpeg" | "image/png" | "image/webp";
     if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
       toast.error("Use a JPEG, PNG, or WebP photo");
       return;
     }
-
     setScanning(true);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-
+      const base64 = await toBase64(file);
       const meta = await extractFn({ data: { imageBase64: base64, mimeType } });
       onContinue({ ...emptyDraft(), title: meta.title, author: meta.author, isbn: meta.isbn ?? "" });
     } catch {
@@ -107,25 +201,29 @@ function IdentifyStep({
     }
   };
 
-  const tabs: { id: Method; label: string; icon: React.ElementType }[] = [
+  const tabs: { id: PhysicalMethod; label: string; icon: React.ElementType }[] = [
     { id: "search", label: "Search", icon: Search },
-    { id: "scan",   label: "Cover scan", icon: Camera },
-    { id: "manual", label: "Manual entry", icon: PenLine },
+    { id: "scan", label: "Cover scan", icon: Camera },
+    { id: "manual", label: "Manual", icon: PenLine },
   ];
 
   return (
     <div className="space-y-4">
-      {/* Tab bar */}
+      <BackButton onClick={onBack} />
+
       <div className="flex gap-1 rounded-lg bg-muted p-1">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
-            onClick={() => { setMethod(id); setResults([]); }}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors ${
+            onClick={() => {
+              setMethod(id);
+              setResults([]);
+            }}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all active:scale-[0.96] cursor-pointer select-none ${
               method === id
                 ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-background/50"
             }`}
           >
             <Icon className="h-3 w-3" />
@@ -134,7 +232,6 @@ function IdentifyStep({
         ))}
       </div>
 
-      {/* Search */}
       {method === "search" && (
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -146,10 +243,13 @@ function IdentifyStep({
               autoFocus
             />
             <Button variant="outline" onClick={handleSearch} disabled={searching}>
-              {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+              {searching ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Search className="h-3.5 w-3.5" />
+              )}
             </Button>
           </div>
-
           {results.length > 0 && (
             <div className="space-y-2">
               {results.map((c) => (
@@ -157,10 +257,14 @@ function IdentifyStep({
                   key={c.googleBooksId}
                   type="button"
                   onClick={() => handleSelectCandidate(c)}
-                  className="flex w-full items-center gap-3 rounded-lg border border-border p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  className="flex w-full items-center gap-3 rounded-lg border border-border p-2.5 text-left hover:bg-accent/50 active:scale-[0.98] active:bg-accent/70 transition-all cursor-pointer select-none"
                 >
                   {c.coverUrl ? (
-                    <img src={c.coverUrl} alt={c.title} className="h-14 w-10 shrink-0 rounded object-cover" />
+                    <img
+                      src={c.coverUrl}
+                      alt={c.title}
+                      className="h-14 w-10 shrink-0 rounded object-cover"
+                    />
                   ) : (
                     <div className="flex h-14 w-10 shrink-0 items-center justify-center rounded bg-muted">
                       <BookOpen className="h-4 w-4 text-muted-foreground/40" />
@@ -177,16 +281,14 @@ function IdentifyStep({
               ))}
             </div>
           )}
-
           {results.length === 0 && query && !searching && (
-            <div className="text-center py-3">
-              <p className="text-[10px] text-muted-foreground">No results — try entering details manually.</p>
-            </div>
+            <p className="text-center text-[10px] text-muted-foreground py-3">
+              No results — try entering details manually.
+            </p>
           )}
         </div>
       )}
 
-      {/* Scan */}
       {method === "scan" && (
         <div className="space-y-3">
           <input
@@ -196,65 +298,48 @@ function IdentifyStep({
             className="hidden"
             onChange={handleFilePick}
           />
-          <button
-            type="button"
+          <DropZone
+            label="Choose cover photo"
+            hint="JPEG, PNG, or WebP"
+            loading={scanning}
+            loadingLabel="Reading cover…"
             onClick={() => fileRef.current?.click()}
-            disabled={scanning}
-            className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-10 text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors disabled:opacity-50"
-          >
-            {scanning ? (
-              <>
-                <Loader2 className="h-6 w-6 animate-spin" />
-                <span className="text-xs">Reading cover…</span>
-              </>
-            ) : (
-              <>
-                <Camera className="h-6 w-6" />
-                <span className="text-xs">Choose cover photo</span>
-                <span className="text-[10px]">JPEG, PNG, or WebP</span>
-              </>
-            )}
-          </button>
+          />
         </div>
       )}
 
-      {/* Manual */}
       {method === "manual" && (
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="m-title">Title</Label>
-            <Input
-              id="m-title"
-              value={manual.title}
-              onChange={(e) => setManual((d) => ({ ...d, title: e.target.value }))}
-              placeholder="High Output Management"
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="m-author">Author</Label>
-            <Input
-              id="m-author"
-              value={manual.author}
-              onChange={(e) => setManual((d) => ({ ...d, author: e.target.value }))}
-              placeholder="Andy Grove"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="m-isbn">
-              ISBN <span className="font-normal text-muted-foreground">(optional)</span>
-            </Label>
-            <Input
-              id="m-isbn"
-              value={manual.isbn}
-              onChange={(e) => setManual((d) => ({ ...d, isbn: e.target.value }))}
-              placeholder="9780679734895"
-            />
-          </div>
+          <Field
+            id="m-title"
+            label="Title"
+            value={manual.title}
+            onChange={(v) => setManual((d) => ({ ...d, title: v }))}
+            placeholder="High Output Management"
+            autoFocus
+          />
+          <Field
+            id="m-author"
+            label="Author"
+            value={manual.author}
+            onChange={(v) => setManual((d) => ({ ...d, author: v }))}
+            placeholder="Andy Grove"
+          />
+          <Field
+            id="m-isbn"
+            label="ISBN"
+            optional
+            value={manual.isbn}
+            onChange={(v) => setManual((d) => ({ ...d, isbn: v }))}
+            placeholder="9780679734895"
+          />
           <Button
             className="w-full"
             onClick={() => {
-              if (!manual.title.trim()) { toast.error("Title is required"); return; }
+              if (!manual.title.trim()) {
+                toast.error("Title is required");
+                return;
+              }
               onContinue(manual);
             }}
           >
@@ -266,15 +351,7 @@ function IdentifyStep({
   );
 }
 
-// ─── Step 2: Review + chapters ────────────────────────────────────────────────
-
-function ReviewStep({
-  draft,
-  onBack,
-}: {
-  draft: Draft;
-  onBack: () => void;
-}) {
+function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => void }) {
   const navigate = useNavigate();
   const suggestFn = useServerFn(suggestChapters);
   const addFn = useServerFn(addPhysicalBook);
@@ -288,7 +365,10 @@ function ReviewStep({
   const [adding, setAdding] = useState(false);
 
   const handleSuggest = async () => {
-    if (!title.trim()) { toast.error("Enter a title first"); return; }
+    if (!title.trim()) {
+      toast.error("Enter a title first");
+      return;
+    }
     setSuggesting(true);
     try {
       const chapters = await suggestFn({ data: { title, author } });
@@ -309,10 +389,14 @@ function ReviewStep({
       .split("\n")
       .map((c) => c.trim())
       .filter(Boolean);
-
-    if (!title.trim()) { toast.error("Title is required"); return; }
-    if (chapters.length === 0) { toast.error("Add at least one chapter"); return; }
-
+    if (!title.trim()) {
+      toast.error("Title is required");
+      return;
+    }
+    if (chapters.length === 0) {
+      toast.error("Add at least one chapter");
+      return;
+    }
     setAdding(true);
     try {
       await addFn({
@@ -336,16 +420,8 @@ function ReviewStep({
 
   return (
     <div className="space-y-4">
-      {adding && (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
-          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">
-            Generating chapter summaries and indexing… this takes ~10 seconds per book.
-          </p>
-        </div>
-      )}
+      {adding && <IngestingBanner label="Generating chapter summaries and indexing… ~10 s per book." />}
 
-      {/* Book details */}
       <div className="flex gap-3">
         {draft.coverUrl && (
           <img
@@ -355,38 +431,29 @@ function ReviewStep({
           />
         )}
         <div className="flex-1 space-y-2">
-          <div className="space-y-1">
-            <Label htmlFor="r-title">Title</Label>
-            <Input id="r-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="r-author">Author</Label>
-            <Input id="r-author" value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="Author name" />
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1">
-          <Label htmlFor="r-isbn">
-            ISBN <span className="font-normal text-muted-foreground">(optional)</span>
-          </Label>
-          <Input id="r-isbn" value={isbn} onChange={(e) => setIsbn(e.target.value)} placeholder="9780…" />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="r-shelf">
-            Shelf <span className="font-normal text-muted-foreground">(optional)</span>
-          </Label>
-          <Input
-            id="r-shelf"
-            value={shelfLocation}
-            onChange={(e) => setShelfLocation(e.target.value)}
-            placeholder="Shelf B, row 2"
+          <Field id="r-title" label="Title" value={title} onChange={setTitle} />
+          <Field
+            id="r-author"
+            label="Author"
+            value={author}
+            onChange={setAuthor}
+            placeholder="Author name"
           />
         </div>
       </div>
 
-      {/* Chapters */}
+      <div className="grid grid-cols-2 gap-2">
+        <Field id="r-isbn" label="ISBN" optional value={isbn} onChange={setIsbn} placeholder="9780…" />
+        <Field
+          id="r-shelf"
+          label="Shelf"
+          optional
+          value={shelfLocation}
+          onChange={setShelfLocation}
+          placeholder="Shelf B, row 2"
+        />
+      </div>
+
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <Label htmlFor="r-chapters">Chapters</Label>
@@ -394,13 +461,9 @@ function ReviewStep({
             type="button"
             onClick={handleSuggest}
             disabled={suggesting || adding}
-            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {suggesting ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Sparkles className="h-3 w-3" />
-            )}
+            {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
             Suggest
           </button>
         </div>
@@ -408,13 +471,13 @@ function ReviewStep({
           id="r-chapters"
           value={chaptersText}
           onChange={(e) => setChaptersText(e.target.value)}
-          placeholder={"Introduction\nChapter 1: The Basics of Production\nChapter 2: Managing the Breakfast Factory"}
+          placeholder={"Introduction\nChapter 1: The Basics\nChapter 2: …"}
           rows={6}
           disabled={adding}
           className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 resize-none leading-relaxed placeholder:text-muted-foreground/50"
         />
         <p className="text-[10px] text-muted-foreground">
-          One chapter per line. {librisWillGenerate}
+          One chapter per line. Lumen will generate a semantic summary for each.
         </p>
       </div>
 
@@ -430,35 +493,667 @@ function ReviewStep({
   );
 }
 
-const librisWillGenerate = "Lumen will generate a semantic summary for each chapter.";
+// ─── Digital book flow (PDF / ePub) ───────────────────────────────────────────
 
-// ─── Root component ───────────────────────────────────────────────────────────
+type DigitalStep = "upload" | "preview" | "ingesting";
 
-function ImportBook() {
-  const [step, setStep] = useState<Step>("identify");
-  const [draft, setDraft] = useState<Draft>(emptyDraft());
+type DigitalDraft = {
+  title: string;
+  author: string;
+  isbn: string;
+  coverUrl: string;
+  fileType: "pdf" | "epub";
+  chunks: { content: string; chapterTitle?: string | null; pageNumber?: number | null }[];
+};
+
+function DigitalFlow({ onBack }: { onBack: () => void }) {
+  const navigate = useNavigate();
+  const addDigitalFn = useServerFn(addDigitalBook);
+  const checkDupFn = useServerFn(checkDuplicate);
+
+  const [step, setStep] = useState<DigitalStep>("upload");
+  const [draft, setDraft] = useState<DigitalDraft | null>(null);
+  const [parsing, setParsing] = useState(false);
+
+  const handleFile = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext !== "pdf" && ext !== "epub") {
+      toast.error("Only PDF and ePub files are supported");
+      return;
+    }
+    setParsing(true);
+    try {
+      if (ext === "pdf") {
+        const { extractPdf } = await import("@/lib/sources/pdf");
+        const result: PdfExtractResult = await extractPdf(file);
+        if (result.isScanned) {
+          toast.info("This PDF appears to be scanned — use Physical book to add it via search or cover scan.");
+          setParsing(false);
+          return;
+        }
+        if (result.chunks.length === 0) {
+          toast.error("Could not extract any text from this PDF");
+          setParsing(false);
+          return;
+        }
+        setDraft({
+          title: result.title ?? file.name.replace(/\.pdf$/i, ""),
+          author: result.author ?? "",
+          isbn: "",
+          coverUrl: "",
+          fileType: "pdf",
+          chunks: result.chunks,
+        });
+      } else {
+        const { extractEpub } = await import("@/lib/sources/epub");
+        const result: EpubExtractResult = await extractEpub(file);
+        if (result.chunks.length === 0) {
+          toast.error("Could not extract any text from this ePub");
+          setParsing(false);
+          return;
+        }
+        setDraft({
+          title: result.title ?? file.name.replace(/\.epub$/i, ""),
+          author: result.author ?? "",
+          isbn: result.isbn ?? "",
+          coverUrl: "",
+          fileType: "epub",
+          chunks: result.chunks,
+        });
+      }
+      setStep("preview");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to parse file");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    if (!draft) return;
+    setStep("ingesting");
+    try {
+      const dup = await checkDupFn({
+        data: {
+          title: draft.title,
+          author: draft.author || undefined,
+          isbn: draft.isbn || undefined,
+        },
+      });
+      if (dup.exists) {
+        toast.error(`"${draft.title}" is already in your library`);
+        setStep("preview");
+        return;
+      }
+      await addDigitalFn({
+        data: {
+          title: draft.title,
+          author: draft.author || undefined,
+          isbn: draft.isbn || undefined,
+          coverUrl: draft.coverUrl || undefined,
+          chunks: draft.chunks,
+        },
+      });
+      toast.success(`"${draft.title}" indexed — ${draft.chunks.length} chunks`);
+      navigate({ to: "/library" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ingestion failed");
+      setStep("preview");
+    }
+  };
+
+  if (step === "upload") {
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={onBack} />
+        <DigitalUploadStep parsing={parsing} onFile={handleFile} />
+      </div>
+    );
+  }
+
+  if (step === "preview" && draft) {
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={() => setStep("upload")} />
+        <div className="rounded-lg border border-border p-3 space-y-3">
+          <div className="flex items-center gap-2">
+            <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+              {draft.fileType === "pdf" ? "PDF" : "ePub"} · {draft.chunks.length} chunks extracted
+            </span>
+          </div>
+          <Field
+            id="d-title"
+            label="Title"
+            value={draft.title}
+            onChange={(v) => setDraft((d) => d && { ...d, title: v })}
+          />
+          <Field
+            id="d-author"
+            label="Author"
+            optional
+            value={draft.author}
+            onChange={(v) => setDraft((d) => d && { ...d, author: v })}
+            placeholder="Author name"
+          />
+          <Field
+            id="d-isbn"
+            label="ISBN"
+            optional
+            value={draft.isbn}
+            onChange={(v) => setDraft((d) => d && { ...d, isbn: v })}
+            placeholder="9780…"
+          />
+        </div>
+        <Button className="w-full" onClick={handleIngest}>
+          Add to library
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <IngestingBanner label={`Embedding ${draft?.chunks.length ?? 0} chunks… this may take a minute.`} />
+    </div>
+  );
+}
+
+function DigitalUploadStep({
+  parsing,
+  onFile,
+}: {
+  parsing: boolean;
+  onFile: (f: File) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onFile(file);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) onFile(file);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".pdf,.epub"
+        className="hidden"
+        onChange={handleChange}
+      />
+      <DropZone
+        label="Drop PDF or ePub here"
+        hint="or click to choose a file"
+        loading={parsing}
+        loadingLabel="Parsing file…"
+        onClick={() => fileRef.current?.click()}
+        icon={Upload}
+      />
+    </div>
+  );
+}
+
+// ─── Kindle library flow ──────────────────────────────────────────────────────
+
+type KindleBook = {
+  title: string;
+  author: string;
+  isbn: string;
+  coverUrl: string;
+  selected: boolean;
+  isDuplicate: boolean;
+  status: "pending" | "processing" | "done" | "failed";
+};
+
+type KindleStep = "screenshots" | "review" | "ingesting";
+
+function KindleFlow({ onBack }: { onBack: () => void }) {
+  const navigate = useNavigate();
+  const extractFn = useServerFn(extractKindleLibrary);
+  const lookupFn = useServerFn(lookupBook);
+  const checkDupFn = useServerFn(checkDuplicate);
+  const addKindleFn = useServerFn(addKindleBook);
+
+  const [step, setStep] = useState<KindleStep>("screenshots");
+  const [screenshots, setScreenshots] = useState<{ id: string; name: string; base64: string; mimeType: "image/jpeg" | "image/png" | "image/webp" }[]>([]);
+  const [extracting, setExtracting] = useState(false);
+  const [books, setBooks] = useState<KindleBook[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleScreenshots = async (files: FileList) => {
+    const valid = Array.from(files).filter((f) =>
+      ["image/jpeg", "image/png", "image/webp"].includes(f.type),
+    );
+    if (valid.length === 0) {
+      toast.error("Use JPEG, PNG, or WebP screenshots");
+      return;
+    }
+    const newScreenshots = await Promise.all(
+      valid.map(async (f) => ({
+        id: crypto.randomUUID(),
+        name: f.name,
+        base64: await toBase64(f),
+        mimeType: f.type as "image/jpeg" | "image/png" | "image/webp",
+      })),
+    );
+    setScreenshots((prev) => [...prev, ...newScreenshots]);
+  };
+
+  const handleExtract = async () => {
+    if (screenshots.length === 0) {
+      toast.error("Add at least one screenshot first");
+      return;
+    }
+    setExtracting(true);
+    try {
+      const allBooks: { title: string; author: string }[] = [];
+
+      for (const ss of screenshots) {
+        const result = await extractFn({ data: { imageBase64: ss.base64, mimeType: ss.mimeType } });
+        allBooks.push(...result.books);
+      }
+
+      if (allBooks.length === 0) {
+        toast.error("No books detected — try a clearer screenshot");
+        return;
+      }
+
+      // Deduplicate by title (case-insensitive)
+      const seen = new Set<string>();
+      const unique = allBooks.filter(({ title }) => {
+        const key = title.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      // Enrich with Google Books metadata + check duplicates in parallel
+      const enriched = await Promise.all(
+        unique.map(async ({ title, author }): Promise<KindleBook> => {
+          const [candidates, dup] = await Promise.all([
+            lookupFn({ data: { query: `${title} ${author}` } }).catch(() => []),
+            checkDupFn({ data: { title, author } }).catch(() => ({ exists: false })),
+          ]);
+          const best = candidates[0];
+          return {
+            title: best?.title ?? title,
+            author: best?.authors.join(", ") ?? author,
+            isbn: best?.isbn ?? "",
+            coverUrl: best?.coverUrl ?? "",
+            selected: !dup.exists,
+            isDuplicate: dup.exists,
+            status: "pending",
+          };
+        }),
+      );
+
+      setBooks(enriched);
+      setStep("review");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Extraction failed");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    const toAdd = books.filter((b) => b.selected && !b.isDuplicate);
+    if (toAdd.length === 0) {
+      toast.error("No books selected");
+      return;
+    }
+    setStep("ingesting");
+
+    for (let i = 0; i < books.length; i++) {
+      const book = books[i];
+      if (!book.selected || book.isDuplicate) continue;
+
+      setBooks((prev) => prev.map((b, j) => (j === i ? { ...b, status: "processing" } : b)));
+      try {
+        await addKindleFn({
+          data: {
+            title: book.title,
+            author: book.author || undefined,
+            isbn: book.isbn || undefined,
+            coverUrl: book.coverUrl || undefined,
+          },
+        });
+        setBooks((prev) => prev.map((b, j) => (j === i ? { ...b, status: "done" } : b)));
+      } catch {
+        setBooks((prev) => prev.map((b, j) => (j === i ? { ...b, status: "failed" } : b)));
+      }
+    }
+
+    const doneCount = toAdd.length;
+    toast.success(`${doneCount} book${doneCount === 1 ? "" : "s"} added to your library`);
+    navigate({ to: "/library" });
+  };
+
+  if (step === "screenshots") {
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={onBack} />
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          Go to{" "}
+          <span className="font-medium text-foreground">read.amazon.com/kindle-library</span>, take
+          screenshots of your library (multiple if needed), then upload them here.
+        </p>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          className="hidden"
+          onChange={(e) => e.target.files && handleScreenshots(e.target.files)}
+        />
+
+        <DropZone
+          label="Add screenshots"
+          hint="JPEG, PNG, or WebP · select multiple"
+          loading={false}
+          loadingLabel=""
+          onClick={() => fileRef.current?.click()}
+          icon={Smartphone}
+        />
+
+        {screenshots.length > 0 && (
+          <div className="space-y-1.5">
+            {screenshots.map((ss) => (
+              <div
+                key={ss.id}
+                className="flex items-center justify-between rounded-md bg-muted px-3 py-2"
+              >
+                <span className="text-[10px] truncate">{ss.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setScreenshots((prev) => prev.filter((s) => s.id !== ss.id))}
+                  className="ml-2 text-[10px] text-muted-foreground hover:text-destructive active:opacity-60 transition-all cursor-pointer select-none"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Button
+          className="w-full"
+          onClick={handleExtract}
+          disabled={extracting || screenshots.length === 0}
+        >
+          {extracting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              Extracting books…
+            </>
+          ) : (
+            `Extract books from ${screenshots.length || ""} screenshot${screenshots.length !== 1 ? "s" : ""}`
+          )}
+        </Button>
+      </div>
+    );
+  }
+
+  if (step === "review") {
+    const selectedCount = books.filter((b) => b.selected && !b.isDuplicate).length;
+
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={() => setStep("screenshots")} />
+        <p className="text-[10px] text-muted-foreground">
+          {books.length} books detected. {books.filter((b) => b.isDuplicate).length} already in your
+          library.
+        </p>
+
+        <div className="space-y-1.5 max-h-72 overflow-y-auto">
+          {books.map((book, i) => (
+            <div
+              key={i}
+              className={`flex items-center gap-3 rounded-lg border p-2.5 transition-colors ${
+                book.isDuplicate
+                  ? "border-border opacity-40"
+                  : book.selected
+                    ? "border-border"
+                    : "border-border opacity-60"
+              }`}
+            >
+              {book.coverUrl ? (
+                <img
+                  src={book.coverUrl}
+                  alt={book.title}
+                  className="h-12 w-8 shrink-0 rounded object-cover"
+                />
+              ) : (
+                <div className="flex h-12 w-8 shrink-0 items-center justify-center rounded bg-muted">
+                  <BookOpen className="h-3.5 w-3.5 text-muted-foreground/40" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium truncate">{book.title}</p>
+                <p className="text-[10px] text-muted-foreground truncate">{book.author}</p>
+                {book.isDuplicate && (
+                  <p className="text-[10px] text-muted-foreground">Already in library</p>
+                )}
+              </div>
+              {!book.isDuplicate && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBooks((prev) =>
+                      prev.map((b, j) => (j === i ? { ...b, selected: !b.selected } : b)),
+                    )
+                  }
+                  className="shrink-0"
+                >
+                  <div
+                    className={`h-4 w-4 rounded border ${
+                      book.selected
+                        ? "bg-foreground border-foreground"
+                        : "border-muted-foreground/40"
+                    }`}
+                  />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Button
+          className="w-full"
+          onClick={handleIngest}
+          disabled={selectedCount === 0}
+        >
+          Add {selectedCount} book{selectedCount !== 1 ? "s" : ""} to library
+        </Button>
+      </div>
+    );
+  }
+
+  // Ingesting
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-medium">Adding to library…</p>
+      <div className="space-y-1.5">
+        {books
+          .filter((b) => b.selected && !b.isDuplicate)
+          .map((book, i) => (
+            <div key={i} className="flex items-center gap-2.5 rounded-md bg-muted px-3 py-2">
+              <StatusIcon status={book.status} />
+              <span className="text-[11px] truncate">{book.title}</span>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared small components ──────────────────────────────────────────────────
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground active:opacity-70 transition-all cursor-pointer select-none"
+    >
+      <ArrowLeft className="h-3 w-3" />
+      Back
+    </button>
+  );
+}
+
+function Field({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  optional,
+  autoFocus,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  optional?: boolean;
+  autoFocus?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>
+        {label}
+        {optional && (
+          <span className="ml-1 font-normal text-muted-foreground">(optional)</span>
+        )}
+      </Label>
+      <Input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+      />
+    </div>
+  );
+}
+
+function DropZone({
+  label,
+  hint,
+  loading,
+  loadingLabel,
+  onClick,
+  icon: Icon = Upload,
+}: {
+  label: string;
+  hint: string;
+  loading: boolean;
+  loadingLabel: string;
+  onClick: () => void;
+  icon?: React.ElementType;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-10 text-muted-foreground hover:border-foreground/40 hover:text-foreground hover:bg-accent/20 active:scale-[0.99] active:bg-accent/40 transition-all cursor-pointer select-none disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {loading ? (
+        <>
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span className="text-xs">{loadingLabel}</span>
+        </>
+      ) : (
+        <>
+          <Icon className="h-6 w-6" />
+          <span className="text-xs">{label}</span>
+          <span className="text-[10px]">{hint}</span>
+        </>
+      )}
+    </button>
+  );
+}
+
+function IngestingBanner({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
+      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-muted-foreground" />
+      <p className="text-xs text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function StatusIcon({ status }: { status: KindleBook["status"] }) {
+  if (status === "done") return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />;
+  if (status === "failed") return <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />;
+  if (status === "processing") return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />;
+  return <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />;
+}
+
+// ─── Utility ──────────────────────────────────────────────────────────────────
+
+function toBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ─── Root component ────────────────────────────────────────────────────────────
+
+function ImportPage() {
+  const [mode, setMode] = useState<ImportMode | null>(null);
+
+  const title =
+    mode === "physical"
+      ? "Physical book"
+      : mode === "digital"
+        ? "PDF or ePub"
+        : mode === "kindle"
+          ? "Kindle library"
+          : "Import";
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-5">
-        <Link to="/library" className="text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="h-3.5 w-3.5" />
-        </Link>
-        <h1 className="text-xs font-medium">Add a book</h1>
+        {mode ? (
+          <button
+            type="button"
+            onClick={() => setMode(null)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <Link to="/library" className="text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </Link>
+        )}
+        <h1 className="text-xs font-medium">{title}</h1>
       </header>
 
       <div className="flex-1 overflow-y-auto p-5">
         <div className="max-w-sm">
-          {step === "identify" ? (
-            <IdentifyStep
-              onContinue={(d) => { setDraft(d); setStep("review"); }}
-            />
-          ) : (
-            <ReviewStep
-              draft={draft}
-              onBack={() => setStep("identify")}
-            />
-          )}
+          {mode === null && <ModeSelector onSelect={setMode} />}
+          {mode === "physical" && <PhysicalFlow onBack={() => setMode(null)} />}
+          {mode === "digital" && <DigitalFlow onBack={() => setMode(null)} />}
+          {mode === "kindle" && <KindleFlow onBack={() => setMode(null)} />}
         </div>
       </div>
     </div>
