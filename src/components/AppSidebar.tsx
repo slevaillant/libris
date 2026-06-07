@@ -8,7 +8,7 @@ type Props = { profile: UserProfile | null };
 
 const NAV = [
   { to: "/library", label: "Library", icon: BookOpen, enabled: true },
-  { to: "/chat",    label: "Chat",    icon: MessageCircle, enabled: false },
+  { to: "/chat",    label: "Chat",    icon: MessageCircle, enabled: true },
   { to: "/settings", label: "Settings", icon: Settings, enabled: false },
 ] as const;
 

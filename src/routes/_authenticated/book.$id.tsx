@@ -13,8 +13,9 @@ import {
   Plus,
   Trash2,
   X,
+  RefreshCw,
 } from "lucide-react";
-import { getSource, type ChunkRow } from "@/lib/sources.functions";
+import { getSource, reembedSource, type ChunkRow } from "@/lib/sources.functions";
 import {
   createHighlight,
   listHighlights,
@@ -300,11 +301,31 @@ function BookDetail() {
   const fetchSource = useServerFn(getSource);
   const fetchHighlights = useServerFn(listHighlights);
 
+  const reembedFn = useServerFn(reembedSource);
+
   const [data, setData] = useState<{ source: SourceDetail; chunks: ChunkRow[] } | null>(null);
   const [highlights, setHighlights] = useState<HighlightRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addingHighlight, setAddingHighlight] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+
+  const handleReindex = async () => {
+    if (!data) return;
+    setReindexing(true);
+    try {
+      const { embedded } = await reembedFn({ data: { sourceId: data.source.id } });
+      if (embedded === 0) {
+        toast.info("All chunks already have embeddings");
+      } else {
+        toast.success(`Re-indexed ${embedded} chunk${embedded !== 1 ? "s" : ""}`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Re-indexing failed");
+    } finally {
+      setReindexing(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -372,7 +393,19 @@ function BookDetail() {
                 {data.source.shelfLocation && (
                   <p className="text-[10px] text-muted-foreground/60">{data.source.shelfLocation}</p>
                 )}
-                <StatusPill status={data.source.ingestStatus} />
+                <div className="flex items-center gap-2">
+                  <StatusPill status={data.source.ingestStatus} />
+                  <button
+                    type="button"
+                    onClick={handleReindex}
+                    disabled={reindexing}
+                    title="Re-index missing embeddings"
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none disabled:opacity-40"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${reindexing ? "animate-spin" : ""}`} />
+                    {reindexing ? "Re-indexing…" : "Re-index"}
+                  </button>
+                </div>
               </div>
             </div>
 

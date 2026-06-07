@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { embedBatch } from "@/lib/gemini";
 import type { SourceRow, ChunkRow } from "./library.functions";
 
 export { type SourceRow, type ChunkRow };
@@ -104,4 +105,53 @@ export const getSource = createServerFn({ method: "POST" })
         }),
       ),
     };
+  });
+
+// ─── Re-embed all chunks with missing embeddings for a source ─────────────────
+
+export const reembedSource = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => z.object({ sourceId: z.string().uuid() }).parse(i))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+
+    // Fetch chunks that have no embedding
+    const { data: chunks, error } = await supabase
+      .from("chunks")
+      .select("id, content")
+      .eq("source_id", data.sourceId)
+      .eq("user_id", userId)
+      .is("embedding", null);
+
+    if (error) throw new Error(error.message);
+    if (!chunks || chunks.length === 0) return { embedded: 0 };
+
+    const BATCH = 100;
+    let embedded = 0;
+
+    for (let i = 0; i < chunks.length; i += BATCH) {
+      const batch = chunks.slice(i, i + BATCH);
+      const embeddings = await embedBatch(batch.map((c) => c.content));
+
+      for (let j = 0; j < batch.length; j++) {
+        const vec = embeddings[j];
+        if (!vec) continue;
+        await supabase
+          .from("chunks")
+          .update({
+            embedding: JSON.stringify(vec),
+            indexed_at: new Date().toISOString(),
+          })
+          .eq("id", batch[j].id);
+        embedded++;
+      }
+    }
+
+    await supabase
+      .from("sources")
+      .update({ ingest_status: "complete", last_ingested: new Date().toISOString() })
+      .eq("id", data.sourceId)
+      .eq("user_id", userId);
+
+    return { embedded };
   });
