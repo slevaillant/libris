@@ -199,13 +199,13 @@ export const ingestSubstack = createServerFn({ method: "POST" })
           ...ideas.map((idea, i) => ({
             content: idea,
             chunkType: "key_idea" as const,
-            sectionTitle: article.title,
+            sectionTitle: `Key idea ${i + 1}`,
             chunkIndex: i,
           })),
           ...paragraphChunks.map((p, i) => ({
             content: p,
             chunkType: "passage" as const,
-            sectionTitle: null,
+            sectionTitle: `Section ${i + 1}`,
             chunkIndex: ideas.length + i,
           })),
         ];
@@ -373,13 +373,13 @@ export const ingestWebArticle = createServerFn({ method: "POST" })
         ...ideas.map((idea, i) => ({
           content: idea,
           chunkType: "key_idea" as const,
-          sectionTitle: article.title,
+          sectionTitle: `Key idea ${i + 1}`,
           chunkIndex: i,
         })),
         ...paragraphChunks.map((p, i) => ({
           content: p,
           chunkType: "passage" as const,
-          sectionTitle: null,
+          sectionTitle: `Section ${i + 1}`,
           chunkIndex: ideas.length + i,
         })),
       ];

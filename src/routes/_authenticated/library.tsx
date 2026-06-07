@@ -157,7 +157,7 @@ function Library() {
         <Link to="/import">
           <Button size="sm" variant="outline">
             <Plus className="h-3 w-3" />
-            Add book
+            Import
           </Button>
         </Link>
       </header>
@@ -175,13 +175,13 @@ function Library() {
             <div>
               <p className="text-sm font-medium">Your library is empty</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Add your first physical book to start building your knowledge base.
+                Import a book, article, Substack, or GitHub repo to start building your knowledge base.
               </p>
             </div>
             <Link to="/import">
               <Button size="sm">
                 <Plus className="h-3 w-3" />
-                Add first book
+                Import
               </Button>
             </Link>
           </div>

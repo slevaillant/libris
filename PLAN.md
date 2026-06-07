@@ -5,6 +5,33 @@ Never start a phase until the previous one is fully working in production.
 
 ---
 
+## Content Indexing Checklist (do this in parallel with Phase 8+)
+*The richer your library, the better Lumen's answers. Index everything before using Libris seriously.*
+
+### Books to add
+- [ ] All physical books — Import → Physical book (search by title or cover scan)
+- [ ] All Kindle ebooks — Import → Kindle library (screenshot read.amazon.com/kindle-library)
+- [ ] Any PDFs or ePubs you have locally — Import → PDF or ePub
+- [ ] Re-index any books showing 0 embeddings (open the book → Re-index button)
+
+### Web sources to add
+- [ ] Substacks you follow regularly — Import → Web sources → Substack
+- [ ] GitHub repos you reference often — Import → Web sources → GitHub
+- [ ] Key articles you've saved or bookmarked — Import → Web sources → URL
+
+### Verify
+- [ ] Run this SQL in Supabase to confirm no sources have 0 embeddings:
+  ```sql
+  select title, source_type, count(*) chunks, count(embedding) embedded
+  from sources s join chunks c on c.source_id = s.id
+  group by title, source_type
+  having count(*) != count(embedding)
+  order by title;
+  ```
+- [ ] Ask Lumen a question that should be covered by your library — verify it cites the right source
+
+---
+
 ## Phase 0 — Project Scaffold ✓
 *Goal: empty app boots locally and deploys to Cloudflare Workers.*
 
@@ -217,7 +244,46 @@ Recommended flow: **barcode scan → Google Books lookup → confirm metadata �
 
 ---
 
-## Phase 12 — Open Source Preparation
+## Phase 12 — Browser Extension (Quick Capture)
+*Goal: one-click capture of any web page, GitHub repo, Substack article, or YouTube video directly into Libris while browsing — no copy-paste required.*
+
+### Why this matters
+Phase 7 requires the user to manually copy a URL and paste it into the import page. The browser extension removes that friction: you're reading something interesting, you click the extension icon, it's indexed.
+
+### Scope
+- Chrome extension (Manifest V3) — also works in Edge and Arc
+- Detects current tab URL + page type
+- Sends to Libris API for immediate indexing
+- Shows a toast-style confirmation: "Indexed — 5 key ideas added to Libris"
+
+### Supported capture types
+| Page type | Detection | Ingestion path |
+|---|---|---|
+| Substack article | URL contains `.substack.com/p/` | Existing RSS article flow |
+| GitHub repo | URL matches `github.com/owner/repo` | Existing GitHub flow |
+| Web article | Any other HTTP page | Existing URL ingestion flow |
+| YouTube video | URL contains `youtube.com/watch` | New: YouTube transcript via `youtube-transcript` API |
+
+### YouTube transcript ingestion
+- Fetch auto-generated or manual transcript via YouTube's timedtext API (no API key needed for public videos)
+- Chunk transcript by ~2 min segments, preserving timestamps
+- Extract key ideas (Haiku) from full transcript
+- `chunk_type = 'passage'`, `chapter_title = timestamp` for precise citation
+
+### Architecture
+- Extension popup: shows page title + type detected + "Add to Libris" button
+- Background service worker: calls `POST /api/quick-capture` with `{url, pageType}`
+- Libris needs a `/api/quick-capture` endpoint (TanStack Start API route) that:
+  - Authenticates via stored JWT (user must be logged in to Libris once)
+  - Routes to the correct ingestion function by page type
+  - Returns `{ok, chunks, title}` for the popup confirmation
+
+### Auth approach
+User logs in to Libris in the browser → extension reads the Supabase session from `localStorage` on the `libris.app` origin → passes JWT as Bearer token to the quick-capture endpoint.
+
+---
+
+## Phase 13 — Open Source Preparation
 *Goal: repo is clean, documented, and safe to make public.*
 
 - [ ] Audit for hardcoded values (user IDs, emails, org IDs)

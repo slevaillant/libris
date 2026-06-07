@@ -1049,18 +1049,41 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     setPreview(null);
   };
 
+  // Extract substack handle from full URL or bare handle
+  const extractSubstackHandle = (val: string): string | null => {
+    const m = val.match(/([a-z0-9-]+)\.substack\.com/i);
+    return m ? m[1] : null;
+  };
+
   const handlePreview = async () => {
-    const val = input.trim();
+    let val = input.trim();
     if (!val) return;
+
+    // Auto-detect Substack URLs in any tab
+    const substackHandle = extractSubstackHandle(val);
+    if (substackHandle && tab !== "substack") {
+      setTab("substack");
+      setInput(substackHandle);
+      val = substackHandle;
+    }
+
+    // Auto-detect GitHub URLs in URL tab
+    if (tab === "url" && val.includes("github.com/")) {
+      setTab("github");
+      setInput(val);
+    }
+
     setPreviewing(true);
     setPreview(null);
     try {
-      if (tab === "url") {
-        setPreview(await previewUrlFn({ data: { url: val } }));
-      } else if (tab === "substack") {
-        setPreview(await previewSubstackFn({ data: { handle: val } }));
+      const activeTab = substackHandle ? "substack" : val.includes("github.com/") ? "github" : tab;
+      const activeVal = substackHandle ?? val;
+      if (activeTab === "url") {
+        setPreview(await previewUrlFn({ data: { url: activeVal } }));
+      } else if (activeTab === "substack") {
+        setPreview(await previewSubstackFn({ data: { handle: activeVal } }));
       } else {
-        setPreview(await previewGithubFn({ data: { url: val } }));
+        setPreview(await previewGithubFn({ data: { url: activeVal } }));
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not fetch preview");
@@ -1077,7 +1100,8 @@ function WebFlow({ onBack }: { onBack: () => void }) {
         const r = await ingestUrlFn({ data: { url: input.trim() } });
         toast.success(`Article indexed — ${r.chunks} chunks`);
       } else if (tab === "substack") {
-        const r = await ingestSubstackFn({ data: { handle: input.trim() } });
+        const handle = extractSubstackHandle(input.trim()) ?? input.trim();
+        const r = await ingestSubstackFn({ data: { handle } });
         toast.success(`${r.ingested.length} article${r.ingested.length !== 1 ? "s" : ""} indexed`);
       } else {
         const r = await ingestGithubFn({ data: { url: input.trim() } });
@@ -1307,7 +1331,7 @@ function ImportPage() {
           ? "Kindle library"
           : mode === "web"
             ? "Web sources"
-            : "Import";
+            : "Import sources";
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">

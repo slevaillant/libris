@@ -14,6 +14,8 @@ import {
   Trash2,
   X,
   RefreshCw,
+  Sparkles,
+  ExternalLink,
 } from "lucide-react";
 import { getSource, reembedSource, type ChunkRow } from "@/lib/sources.functions";
 import {
@@ -33,6 +35,7 @@ type SourceDetail = {
   title: string;
   author: string | null;
   isbn: string | null;
+  url: string | null;
   coverUrl: string | null;
   description: string | null;
   shelfLocation: string | null;
@@ -66,7 +69,7 @@ function StatusPill({ status }: { status: string }) {
 
 // ─── Chapter item (collapsible) ───────────────────────────────────────────────
 
-function ChapterItem({ chunk }: { chunk: ChunkRow }) {
+function ChapterItem({ chunk, isArticle = false }: { chunk: ChunkRow; isArticle?: boolean }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -82,7 +85,7 @@ function ChapterItem({ chunk }: { chunk: ChunkRow }) {
           <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
         )}
         <span className="text-xs font-medium flex-1 truncate">
-          {chunk.chapterTitle ?? `Chapter ${chunk.chunkIndex + 1}`}
+          {chunk.chapterTitle ?? `${isArticle ? "Section" : "Chapter"} ${chunk.chunkIndex + 1}`}
         </span>
       </button>
       {open && (
@@ -393,6 +396,19 @@ function BookDetail() {
                 {data.source.shelfLocation && (
                   <p className="text-[10px] text-muted-foreground/60">{data.source.shelfLocation}</p>
                 )}
+                {data.source.url && (
+                  <a
+                    href={data.source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    <span className="truncate max-w-[180px]">
+                      {new URL(data.source.url).hostname.replace(/^www\./, "")}
+                    </span>
+                  </a>
+                )}
                 <div className="flex items-center gap-2">
                   <StatusPill status={data.source.ingestStatus} />
                   <button
@@ -470,25 +486,57 @@ function BookDetail() {
               ))}
             </section>
 
-            {/* Chapters */}
-            {data.chunks.length > 0 && (
-              <section className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
-                  <h2 className="text-xs font-medium">
-                    Chapters
-                    <span className="text-muted-foreground font-normal ml-1.5">
-                      ({data.chunks.length})
-                    </span>
-                  </h2>
-                </div>
-                <div className="space-y-1.5">
-                  {data.chunks.map((chunk) => (
-                    <ChapterItem key={chunk.id} chunk={chunk} />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Chunks — grouped by type */}
+            {data.chunks.length > 0 && (() => {
+              const keyIdeas = data.chunks.filter((c) => c.chunkType === "key_idea");
+              const others = data.chunks.filter((c) => c.chunkType !== "key_idea");
+              const isArticle = ["substack", "web_article"].includes(data.source.sourceType);
+              return (
+                <>
+                  {keyIdeas.length > 0 && (
+                    <section className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                        <h2 className="text-xs font-medium">
+                          Key ideas
+                          <span className="text-muted-foreground font-normal ml-1.5">
+                            ({keyIdeas.length})
+                          </span>
+                        </h2>
+                      </div>
+                      <div className="space-y-1.5">
+                        {keyIdeas.map((chunk) => (
+                          <div
+                            key={chunk.id}
+                            className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3.5 py-2.5"
+                          >
+                            <p className="text-[11px] leading-relaxed">{chunk.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  {others.length > 0 && (
+                    <section className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
+                        <h2 className="text-xs font-medium">
+                          {isArticle ? "Content" : "Chapters"}
+                          <span className="text-muted-foreground font-normal ml-1.5">
+                            ({others.length})
+                          </span>
+                        </h2>
+                      </div>
+                      <div className="space-y-1.5">
+                        {others.map((chunk) => (
+                          <ChapterItem key={chunk.id} chunk={chunk} isArticle={isArticle} />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </>
+              );
+            })()}
 
             {data.source.ingestStatus === "failed" && data.source.ingestError && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">

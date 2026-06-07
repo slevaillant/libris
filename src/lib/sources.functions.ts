@@ -85,6 +85,7 @@ export const getSource = createServerFn({ method: "POST" })
         title: source.title,
         author: source.author as string | null,
         isbn: source.isbn as string | null,
+        url: source.url as string | null,
         coverUrl: source.cover_url as string | null,
         description: source.description as string | null,
         shelfLocation: source.shelf_location as string | null,
