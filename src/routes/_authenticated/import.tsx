@@ -14,6 +14,10 @@ import {
   CheckCircle2,
   XCircle,
   Circle,
+  Globe,
+  GitBranch,
+  Rss,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +34,15 @@ import {
   checkDuplicate,
   type BookCandidate,
 } from "@/lib/library.functions";
+import {
+  previewSubstack,
+  ingestSubstack,
+  previewGithubRepo,
+  ingestGithubRepo,
+  previewWebArticle,
+  ingestWebArticle,
+  type WebSourcePreview,
+} from "@/lib/web-sources.functions";
 import type { PdfExtractResult } from "@/lib/sources/pdf";
 import type { EpubExtractResult } from "@/lib/sources/epub";
 
@@ -39,7 +52,7 @@ export const Route = createFileRoute("/_authenticated/import")({
 
 // ─── Top-level mode ────────────────────────────────────────────────────────────
 
-type ImportMode = "physical" | "digital" | "kindle";
+type ImportMode = "physical" | "digital" | "kindle" | "web";
 
 // ─── Shared types ──────────────────────────────────────────────────────────────
 
@@ -90,6 +103,12 @@ function ModeSelector({ onSelect }: { onSelect: (m: ImportMode) => void }) {
       icon: Smartphone,
       label: "Kindle library",
       description: "Screenshot your Kindle library to bulk-add books",
+    },
+    {
+      id: "web",
+      icon: Globe,
+      label: "Web sources",
+      description: "Import a URL, subscribe to a Substack, or add a GitHub repo",
     },
   ];
 
@@ -999,6 +1018,165 @@ function KindleFlow({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── Web sources flow (URL / Substack / GitHub) ───────────────────────────────
+
+type WebTab = "url" | "substack" | "github";
+
+function WebFlow({ onBack }: { onBack: () => void }) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<WebTab>("url");
+  const [input, setInput] = useState("");
+  const [preview, setPreview] = useState<WebSourcePreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+
+  const previewUrlFn = useServerFn(previewWebArticle);
+  const ingestUrlFn = useServerFn(ingestWebArticle);
+  const previewSubstackFn = useServerFn(previewSubstack);
+  const ingestSubstackFn = useServerFn(ingestSubstack);
+  const previewGithubFn = useServerFn(previewGithubRepo);
+  const ingestGithubFn = useServerFn(ingestGithubRepo);
+
+  const tabs: { id: WebTab; label: string; icon: React.ElementType; placeholder: string }[] = [
+    { id: "url",      label: "URL",      icon: Link2,      placeholder: "https://…" },
+    { id: "substack", label: "Substack", icon: Rss,        placeholder: "lenny  (handle only)" },
+    { id: "github",   label: "GitHub",   icon: GitBranch,  placeholder: "https://github.com/owner/repo" },
+  ];
+
+  const handleTabChange = (t: WebTab) => {
+    setTab(t);
+    setInput("");
+    setPreview(null);
+  };
+
+  const handlePreview = async () => {
+    const val = input.trim();
+    if (!val) return;
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      if (tab === "url") {
+        setPreview(await previewUrlFn({ data: { url: val } }));
+      } else if (tab === "substack") {
+        setPreview(await previewSubstackFn({ data: { handle: val } }));
+      } else {
+        setPreview(await previewGithubFn({ data: { url: val } }));
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not fetch preview");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    if (!preview) return;
+    setIngesting(true);
+    try {
+      if (tab === "url") {
+        const r = await ingestUrlFn({ data: { url: input.trim() } });
+        toast.success(`Article indexed — ${r.chunks} chunks`);
+      } else if (tab === "substack") {
+        const r = await ingestSubstackFn({ data: { handle: input.trim() } });
+        toast.success(`${r.ingested.length} article${r.ingested.length !== 1 ? "s" : ""} indexed`);
+      } else {
+        const r = await ingestGithubFn({ data: { url: input.trim() } });
+        toast.success(`Repo indexed — ${r.chunks} chunks`);
+      }
+      navigate({ to: "/library" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ingestion failed");
+      setIngesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <BackButton onClick={onBack} />
+
+      {/* Tab bar */}
+      <div className="flex gap-1 rounded-lg bg-muted p-1">
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => handleTabChange(id)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-all active:scale-[0.96] cursor-pointer select-none ${
+              tab === id
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+            }`}
+          >
+            <Icon className="h-3 w-3" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Input */}
+      <div className="flex gap-2">
+        <Input
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setPreview(null); }}
+          onKeyDown={(e) => e.key === "Enter" && handlePreview()}
+          placeholder={tabs.find((t) => t.id === tab)?.placeholder}
+          autoFocus
+          disabled={ingesting}
+        />
+        <Button variant="outline" onClick={handlePreview} disabled={previewing || !input.trim() || ingesting}>
+          {previewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+
+      {/* Preview */}
+      {preview && (
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            {tab === "url" && <Link2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+            {tab === "substack" && <Rss className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+            {tab === "github" && <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+            <p className="text-xs font-medium truncate">{preview.title}</p>
+          </div>
+          {preview.description && (
+            <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2">
+              {preview.description}
+            </p>
+          )}
+          {preview.itemCount !== undefined && (
+            <p className="text-[10px] text-muted-foreground">
+              {tab === "substack"
+                ? `${preview.itemCount} articles in feed · importing last 5`
+                : `${preview.itemCount} chunks to index`}
+            </p>
+          )}
+          {preview.items && preview.items.length > 0 && (
+            <div className="space-y-1 pt-0.5">
+              {preview.items.map((item, i) => (
+                <div key={i} className="flex items-baseline gap-2">
+                  <span className="text-[10px] truncate text-muted-foreground">{item.title}</span>
+                  {item.date && (
+                    <span className="text-[9px] text-muted-foreground/50 shrink-0">{item.date}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {preview && (
+        <Button className="w-full" onClick={handleIngest} disabled={ingesting}>
+          {ingesting ? (
+            <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Indexing…</>
+          ) : (
+            "Add to library"
+          )}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ─── Shared small components ──────────────────────────────────────────────────
 
 function BackButton({ onClick }: { onClick: () => void }) {
@@ -1127,7 +1305,9 @@ function ImportPage() {
         ? "PDF or ePub"
         : mode === "kindle"
           ? "Kindle library"
-          : "Import";
+          : mode === "web"
+            ? "Web sources"
+            : "Import";
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -1154,6 +1334,7 @@ function ImportPage() {
           {mode === "physical" && <PhysicalFlow onBack={() => setMode(null)} />}
           {mode === "digital" && <DigitalFlow onBack={() => setMode(null)} />}
           {mode === "kindle" && <KindleFlow onBack={() => setMode(null)} />}
+          {mode === "web" && <WebFlow onBack={() => setMode(null)} />}
         </div>
       </div>
     </div>
