@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { embed } from "@/lib/gemini";
 
@@ -246,6 +247,305 @@ async function synthesize(
   return block.text;
 }
 
+// ─── Memory types ────────────────────────────────────────────────────────────
+
+type MemoryRow = {
+  id: string;
+  memory_type: string;
+  content: string;
+  response_summary: string | null;
+  citations_used: unknown;
+  confidence: number;
+  last_referenced: string | null;
+  created_at: string;
+};
+
+// ─── Load episodic + preference memories (SQL, no embedding needed) ───────────
+
+async function loadContextMemories(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<{ episodic: MemoryRow[]; preferences: MemoryRow[] }> {
+  const { data } = await supabase
+    .from("user_memories")
+    .select("id, memory_type, content, response_summary, citations_used, confidence, last_referenced, created_at")
+    .eq("user_id", userId)
+    .neq("memory_type", "semantic_cache")
+    .gt("confidence", 0.3)
+    .order("last_referenced", { ascending: false })
+    .limit(60);
+
+  const rows = (data ?? []) as MemoryRow[];
+  return {
+    episodic: rows.filter((m) => m.memory_type === "episodic").slice(0, 20),
+    preferences: rows.filter((m) => m.memory_type === "preference"),
+  };
+}
+
+// ─── Check semantic cache (pgvector) ─────────────────────────────────────────
+
+type CacheHit = {
+  memoryId: string;
+  sourceQuery: string;
+  responseSummary: string;
+  similarity: number;
+};
+
+async function checkSemanticCache(
+  supabase: SupabaseClient,
+  userId: string,
+  embedding: number[],
+): Promise<CacheHit | null> {
+  const { data } = await supabase.rpc("match_memories", {
+    p_user_id: userId,
+    p_query_embedding: `[${embedding.join(",")}]`,
+    p_min_score: 0.92,
+  });
+  if (!data || (data as unknown[]).length === 0) return null;
+
+  const hit = (data as { memory_id: string; content: string; response_summary: string | null; similarity: number }[])[0];
+  if (!hit.response_summary) return null;
+
+  // Bump last_referenced (best-effort, fire-and-forget)
+  void supabase
+    .from("user_memories")
+    .update({ last_referenced: new Date().toISOString() })
+    .eq("id", hit.memory_id);
+
+  return {
+    memoryId: hit.memory_id,
+    sourceQuery: hit.content,
+    responseSummary: hit.response_summary,
+    similarity: hit.similarity,
+  };
+}
+
+// ─── Enrich a cache hit response (Haiku) ─────────────────────────────────────
+
+async function enrichCachedResponse(
+  anthropic: Anthropic,
+  librarianName: string,
+  displayName: string,
+  pastQuery: string,
+  newQuery: string,
+  cachedResponse: string,
+): Promise<string> {
+  const res = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 256,
+    system: [
+      {
+        type: "text" as const,
+        text: `You are ${librarianName}, a personal librarian for ${displayName}. You answered a similar question before. Acknowledge the overlap briefly, then confirm or update your answer. Under 200 words. No affirmations.`,
+        cache_control: { type: "ephemeral" as const },
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `Previous question: "${pastQuery}"\nNew question: "${newQuery}"\nPrevious answer: ${cachedResponse}`,
+      },
+    ],
+  });
+  const block = res.content.find((b) => b.type === "text");
+  return block && block.type === "text" ? block.text : cachedResponse;
+}
+
+// ─── Write episodic memory (Haiku, best-effort) ───────────────────────────────
+
+async function writeEpisodicMemory(
+  supabase: SupabaseClient,
+  userId: string,
+  anthropic: Anthropic,
+  query: string,
+  response: string,
+  citations: Citation[],
+): Promise<void> {
+  const citationSummary =
+    citations.length > 0
+      ? citations.map((c) => `${c.title}${c.chapterTitle ? `, ${c.chapterTitle}` : ""}`).join("; ")
+      : "no matching sources";
+
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 128,
+      system: [
+        {
+          type: "text" as const,
+          text: "Write a compact episodic memory (1-2 sentences) for a personal knowledge system. Include what was asked, which sources were most relevant, any coverage gaps. Use the write_memory tool only.",
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+      tools: [
+        {
+          name: "write_memory",
+          description: "Write an episodic memory of this interaction",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              memory: { type: "string" as const },
+            },
+            required: ["memory"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool" as const, name: "write_memory" },
+      messages: [
+        {
+          role: "user",
+          content: `Query: "${query}"\nSources cited: ${citationSummary}\nResponse preview: ${response.slice(0, 250)}`,
+        },
+      ],
+    });
+
+    const toolUse = res.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") return;
+    const memory = (toolUse.input as { memory: string }).memory;
+
+    const expires = new Date();
+    expires.setDate(expires.getDate() + 90);
+
+    await supabase.from("user_memories").insert({
+      user_id: userId,
+      memory_type: "episodic",
+      content: memory,
+      confidence: 1.0,
+      expires_at: expires.toISOString(),
+      last_referenced: new Date().toISOString(),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ─── Write semantic cache entry ───────────────────────────────────────────────
+
+async function writeSemanticCache(
+  supabase: SupabaseClient,
+  userId: string,
+  query: string,
+  embedding: number[],
+  response: string,
+  citations: Citation[],
+): Promise<void> {
+  try {
+    const expires = new Date();
+    expires.setDate(expires.getDate() + 30);
+
+    await supabase.from("user_memories").insert({
+      user_id: userId,
+      memory_type: "semantic_cache",
+      content: query,
+      embedding: JSON.stringify(embedding),
+      source_query: query,
+      response_summary: response.slice(0, 500),
+      citations_used: JSON.stringify(
+        citations.slice(0, 3).map((c) => ({ source_id: c.sourceId, title: c.title, chapter: c.chapterTitle })),
+      ),
+      confidence: 1.0,
+      expires_at: expires.toISOString(),
+      last_referenced: new Date().toISOString(),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ─── Update preference memories every 10 nudges (Haiku) ──────────────────────
+
+async function updatePreferencesIfNeeded(
+  supabase: SupabaseClient,
+  userId: string,
+  anthropic: Anthropic,
+  nudgeCount: number,
+): Promise<void> {
+  if (nudgeCount % 10 !== 0) return;
+
+  try {
+    const { data: recentNudges } = await supabase
+      .from("nudges")
+      .select("query_text, response_text")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(30);
+
+    if (!recentNudges || recentNudges.length < 5) return;
+
+    const nudgesText = recentNudges
+      .map((n, i) => `Q${i + 1}: ${n.query_text}\nA${i + 1}: ${((n.response_text as string) ?? "").slice(0, 120)}`)
+      .join("\n\n");
+
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 256,
+      system: [
+        {
+          type: "text" as const,
+          text: "Analyse these recent knowledge system interactions and extract 3-5 user preference facts (response style, source preferences, question patterns). Use the extract_preferences tool only.",
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+      tools: [
+        {
+          name: "extract_preferences",
+          description: "Extract user preference facts from interaction history",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              preferences: { type: "array" as const, items: { type: "string" as const } },
+            },
+            required: ["preferences"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool" as const, name: "extract_preferences" },
+      messages: [{ role: "user", content: `Recent interactions:\n\n${nudgesText}` }],
+    });
+
+    const toolUse = res.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") return;
+
+    const prefs = (toolUse.input as { preferences: string[] }).preferences;
+
+    // Replace all preference memories with fresh extraction
+    await supabase.from("user_memories").delete().eq("user_id", userId).eq("memory_type", "preference");
+
+    if (prefs.length > 0) {
+      await supabase.from("user_memories").insert(
+        prefs.map((p) => ({
+          user_id: userId,
+          memory_type: "preference",
+          content: p,
+          confidence: 0.8,
+          last_referenced: new Date().toISOString(),
+        })),
+      );
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ─── Format memories for context injection ────────────────────────────────────
+
+function formatMemoriesForL3(episodic: MemoryRow[]): string {
+  if (episodic.length === 0) return "";
+  const lines = episodic.slice(0, 10).map((m) => {
+    const date = new Date(m.last_referenced ?? m.created_at).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+    });
+    return `[${date}] ${m.content}`;
+  });
+  return `\nRecent memory:\n${lines.join("\n")}`;
+}
+
+function formatPreferencesForL2(preferences: MemoryRow[]): string {
+  if (preferences.length === 0) return "";
+  return `\nKNOWN PREFERENCES:\n${preferences.map((p) => `- ${p.content}`).join("\n")}`;
+}
+
 // ─── sendNudge ────────────────────────────────────────────────────────────────
 
 const ConversationTurnSchema = z.object({
@@ -270,22 +570,56 @@ export const sendNudge = createServerFn({ method: "POST" })
     const start = Date.now();
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    // 1. Load user profile
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("display_name, librarian_name, professional_context")
-      .eq("user_id", userId)
-      .maybeSingle();
+    // 1. Load profile + memories in parallel
+    const [profileResult, memoriesResult] = await Promise.all([
+      supabase
+        .from("user_profiles")
+        .select("display_name, librarian_name, professional_context")
+        .eq("user_id", userId)
+        .maybeSingle(),
+      loadContextMemories(supabase as SupabaseClient, userId),
+    ]);
 
+    const profile = profileResult.data;
     const displayName = (profile?.display_name as string) ?? "there";
     const librarianName = (profile?.librarian_name as string) ?? "Lumen";
     const professionalContext = (profile?.professional_context as string | null) ?? null;
+    const { episodic, preferences } = memoriesResult;
 
     // 2. Embed the query
     const embedding = await embed(data.query);
     if (!embedding) throw new Error("Could not embed your question — please try again.");
 
-    // 3. Semantic search
+    // 3. Check semantic cache (M1) — skip full pipeline on hit
+    const cacheHit = await checkSemanticCache(supabase as SupabaseClient, userId, embedding);
+    if (cacheHit) {
+      const enriched = await enrichCachedResponse(
+        anthropic, librarianName, displayName,
+        cacheHit.sourceQuery, data.query, cacheHit.responseSummary,
+      );
+
+      const { data: nudge } = await supabase
+        .from("nudges")
+        .insert({
+          user_id: userId,
+          query_text: data.query,
+          themes: [],
+          response_text: enriched,
+          cache_hit: true,
+          latency_ms: Date.now() - start,
+        })
+        .select("id")
+        .single();
+
+      return {
+        response: enriched,
+        citations: [],
+        nudgeId: (nudge?.id as string) ?? crypto.randomUUID(),
+        coverageQuality: "strong",
+      };
+    }
+
+    // 4. Semantic search
     const { data: rawChunks, error: rpcError } = await supabase.rpc("match_chunks", {
       p_user_id: userId,
       p_query_embedding: `[${embedding.join(",")}]`,
@@ -296,20 +630,24 @@ export const sendNudge = createServerFn({ method: "POST" })
     if (rpcError) throw new Error(rpcError.message);
     const chunks = (rawChunks ?? []) as MatchedChunk[];
 
-    // 4. RAG passage selection (Haiku)
+    // 5. RAG passage selection (Haiku)
     const ragResult = await selectPassages(anthropic, data.query, chunks);
-
-    // Map selected chunk IDs back to full chunk objects
     const selectedChunks = ragResult.passages
       .map((p) => chunks.find((c) => c.chunk_id === p.chunk_id))
       .filter((c): c is MatchedChunk => !!c);
 
-    // 5. Build prompts and synthesise (Sonnet)
-    const l3 = buildL3(data.turnNumber, data.sessionHistory, data.hasSummary);
+    // 6. Build prompts with memory context and synthesise (Sonnet)
+    const l2Suffix = formatPreferencesForL2(preferences);
+    const l3Base = buildL3(data.turnNumber, data.sessionHistory, data.hasSummary);
+    const l3 = l3Base + formatMemoriesForL3(episodic);
     const l4 = buildL4(displayName, data.query, selectedChunks, ragResult.coverage_quality);
-    const responseText = await synthesize(anthropic, displayName, librarianName, professionalContext, l3, l4);
+    const responseText = await synthesize(
+      anthropic, displayName, librarianName,
+      professionalContext + (l2Suffix ? "\n" + l2Suffix : ""),
+      l3, l4,
+    );
 
-    // 6. Store nudge
+    // 7. Store nudge
     const { data: nudge } = await supabase
       .from("nudges")
       .insert({
@@ -326,7 +664,7 @@ export const sendNudge = createServerFn({ method: "POST" })
 
     const nudgeId = (nudge?.id as string) ?? crypto.randomUUID();
 
-    // 7. Store citations
+    // 8. Store citations
     const citations: Citation[] = ragResult.passages
       .map((p, rank): Citation | null => {
         const chunk = chunks.find((c) => c.chunk_id === p.chunk_id);
@@ -354,6 +692,19 @@ export const sendNudge = createServerFn({ method: "POST" })
         })),
       );
     }
+
+    // 9. Write memories async (best-effort, non-blocking on response)
+    const { count: nudgeCount } = await supabase
+      .from("nudges")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then((r) => ({ count: r.count ?? 0 }));
+
+    await Promise.allSettled([
+      writeEpisodicMemory(supabase as SupabaseClient, userId, anthropic, data.query, responseText, citations),
+      writeSemanticCache(supabase as SupabaseClient, userId, data.query, embedding, responseText, citations),
+      updatePreferencesIfNeeded(supabase as SupabaseClient, userId, anthropic, nudgeCount),
+    ]);
 
     return { response: responseText, citations, nudgeId, coverageQuality: ragResult.coverage_quality };
   });
