@@ -12,6 +12,56 @@ export type GithubRepoMeta = {
   chunks: GithubChunk[];
 };
 
+// Decode base64 GitHub API content as UTF-8 (atob gives Latin-1, corrupting multibyte chars)
+function base64ToUtf8(b64: string): string {
+  const binary = atob(b64.replace(/\n/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+// Convert markdown to plain readable text suitable for embedding
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/<!--[\s\S]*?-->/g, "")
+    // Nested badge/image links: [![alt](img)](url) → remove (pure noise)
+    .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, "")
+    // Images: ![alt](url) → remove
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    // Links: [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    // Bold+italic, bold, italic
+    .replace(/\*{3}([^*\n]+)\*{3}/g, "$1")
+    .replace(/\*{2}([^*\n]+)\*{2}/g, "$1")
+    .replace(/_{2}([^_\n]+)_{2}/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    // Headings → plain text
+    .replace(/^#{1,6}\s+/gm, "")
+    // Code fences → keep content
+    .replace(/^```[^\n]*\n([\s\S]*?)^```/gm, "$1")
+    // Inline code → plain text
+    .replace(/`([^`]+)`/g, "$1")
+    // Blockquotes
+    .replace(/^>\s*/gm, "")
+    // Horizontal rules
+    .replace(/^[-*_]{3,}\s*$/gm, "")
+    // HTML tags
+    .replace(/<[^>]+>/g, " ")
+    // HTML entities
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    // Table separator rows: |---|---|
+    .replace(/^\|[-:|\s]+\|$/gm, "")
+    // Collapse whitespace
+    .replace(/ {2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 // Split markdown by ## and ### headings, respecting 600-token limit (~2400 chars)
 function chunkMarkdown(markdown: string, filePath: string): GithubChunk[] {
   const MAX_CHARS = 2400;
@@ -22,9 +72,8 @@ function chunkMarkdown(markdown: string, filePath: string): GithubChunk[] {
   let buffer: string[] = [];
 
   const flush = () => {
-    const text = buffer.join("\n").trim();
+    const text = stripMarkdown(buffer.join("\n"));
     if (text.length > 80) {
-      // Split oversized sections at paragraph boundary
       if (text.length > MAX_CHARS) {
         const paragraphs = text.split(/\n\n+/);
         let sub = "";
@@ -48,7 +97,7 @@ function chunkMarkdown(markdown: string, filePath: string): GithubChunk[] {
     if (/^#{2,3}\s/.test(line)) {
       flush();
       currentTitle = line.replace(/^#{2,3}\s+/, "").trim();
-      buffer.push(line);
+      // Don't push the heading into buffer — it's captured as sectionTitle
     } else {
       buffer.push(line);
     }
@@ -84,7 +133,7 @@ async function getFileContent(
   if (!res.ok) return null;
   const data = (await res.json()) as { content?: string; encoding?: string };
   if (!data.content || data.encoding !== "base64") return null;
-  return atob(data.content.replace(/\n/g, ""));
+  return base64ToUtf8(data.content);
 }
 
 async function listDir(
@@ -123,7 +172,7 @@ export async function fetchGithubRepo(repoUrl: string, token?: string): Promise<
   if (readmeRes.ok) {
     const readmeData = (await readmeRes.json()) as { content?: string; encoding?: string };
     if (readmeData.content && readmeData.encoding === "base64") {
-      const text = atob(readmeData.content.replace(/\n/g, ""));
+      const text = base64ToUtf8(readmeData.content);
       chunks.push(...chunkMarkdown(text, "README.md"));
     }
   }
