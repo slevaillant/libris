@@ -512,215 +512,228 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
   );
 }
 
-// ─── Digital book flow (PDF / ePub) ───────────────────────────────────────────
+// ─── Digital book flow (PDF / ePub — bulk) ───────────────────────────────────
 
-type DigitalStep = "upload" | "preview" | "ingesting";
+type FileItemStatus = "queued" | "parsing" | "duplicate" | "scanned" | "indexing" | "done" | "failed";
 
-type DigitalDraft = {
-  title: string;
-  author: string;
-  isbn: string;
-  coverUrl: string;
-  fileType: "pdf" | "epub";
-  chunks: { content: string; chapterTitle?: string | null; pageNumber?: number | null }[];
+type FileItem = {
+  id: string;
+  file: File;
+  name: string;
+  status: FileItemStatus;
+  chunks?: number;
+  error?: string;
 };
+
+type DigitalStep = "select" | "processing" | "done";
 
 function DigitalFlow({ onBack }: { onBack: () => void }) {
   const navigate = useNavigate();
   const addDigitalFn = useServerFn(addDigitalBook);
   const checkDupFn = useServerFn(checkDuplicate);
 
-  const [step, setStep] = useState<DigitalStep>("upload");
-  const [draft, setDraft] = useState<DigitalDraft | null>(null);
-  const [parsing, setParsing] = useState(false);
+  const [step, setStep] = useState<DigitalStep>("select");
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = async (file: File) => {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (ext !== "pdf" && ext !== "epub") {
+  const addFiles = (incoming: FileList | File[]) => {
+    const valid = Array.from(incoming).filter((f) => {
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      return ext === "pdf" || ext === "epub";
+    });
+    if (valid.length === 0) {
       toast.error("Only PDF and ePub files are supported");
       return;
     }
-    setParsing(true);
-    try {
-      if (ext === "pdf") {
-        const { extractPdf } = await import("@/lib/sources/pdf");
-        const result: PdfExtractResult = await extractPdf(file);
-        if (result.isScanned) {
-          toast.info("This PDF appears to be scanned — use Physical book to add it via search or cover scan.");
-          setParsing(false);
-          return;
-        }
-        if (result.chunks.length === 0) {
-          toast.error("Could not extract any text from this PDF");
-          setParsing(false);
-          return;
-        }
-        setDraft({
-          title: result.title ?? file.name.replace(/\.pdf$/i, ""),
-          author: result.author ?? "",
-          isbn: "",
-          coverUrl: "",
-          fileType: "pdf",
-          chunks: result.chunks,
-        });
-      } else {
-        const { extractEpub } = await import("@/lib/sources/epub");
-        const result: EpubExtractResult = await extractEpub(file);
-        if (result.chunks.length === 0) {
-          toast.error("Could not extract any text from this ePub");
-          setParsing(false);
-          return;
-        }
-        setDraft({
-          title: result.title ?? file.name.replace(/\.epub$/i, ""),
-          author: result.author ?? "",
-          isbn: result.isbn ?? "",
-          coverUrl: "",
-          fileType: "epub",
-          chunks: result.chunks,
-        });
-      }
-      setStep("preview");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to parse file");
-    } finally {
-      setParsing(false);
-    }
+    setFiles((prev) => [
+      ...prev,
+      ...valid.map((f) => ({ id: crypto.randomUUID(), file: f, name: f.name, status: "queued" as FileItemStatus })),
+    ]);
   };
 
-  const handleIngest = async () => {
-    if (!draft) return;
-    setStep("ingesting");
-    try {
-      const dup = await checkDupFn({
-        data: {
-          title: draft.title,
-          author: draft.author || undefined,
-          isbn: draft.isbn || undefined,
-        },
-      });
-      if (dup.exists) {
-        toast.error(`"${draft.title}" is already in your library`);
-        setStep("preview");
-        return;
+  const removeFile = (id: string) => setFiles((prev) => prev.filter((f) => f.id !== id));
+
+  const updateFile = (id: string, patch: Partial<FileItem>) =>
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  const handleProcess = async () => {
+    if (files.length === 0) return;
+    setStep("processing");
+
+    for (const item of files) {
+      const ext = item.file.name.split(".").pop()?.toLowerCase();
+
+      // 1. Parse
+      updateFile(item.id, { status: "parsing" });
+      let chunks: { content: string; chapterTitle?: string | null; pageNumber?: number | null }[] = [];
+      let title = item.file.name.replace(/\.(pdf|epub)$/i, "");
+      let author = "";
+      let isbn = "";
+
+      try {
+        if (ext === "pdf") {
+          const { extractPdf } = await import("@/lib/sources/pdf");
+          const result: PdfExtractResult = await extractPdf(item.file);
+          if (result.isScanned) {
+            updateFile(item.id, { status: "scanned", error: "Scanned PDF — add via Physical book instead" });
+            continue;
+          }
+          if (result.chunks.length === 0) {
+            updateFile(item.id, { status: "failed", error: "No extractable text" });
+            continue;
+          }
+          chunks = result.chunks;
+          title = result.title ?? title;
+          author = result.author ?? "";
+        } else {
+          const { extractEpub } = await import("@/lib/sources/epub");
+          const result: EpubExtractResult = await extractEpub(item.file);
+          if (result.chunks.length === 0) {
+            updateFile(item.id, { status: "failed", error: "No extractable text" });
+            continue;
+          }
+          chunks = result.chunks;
+          title = result.title ?? title;
+          author = result.author ?? "";
+          isbn = result.isbn ?? "";
+        }
+      } catch (e) {
+        updateFile(item.id, { status: "failed", error: e instanceof Error ? e.message : "Parse error" });
+        continue;
       }
-      await addDigitalFn({
-        data: {
-          title: draft.title,
-          author: draft.author || undefined,
-          isbn: draft.isbn || undefined,
-          coverUrl: draft.coverUrl || undefined,
-          chunks: draft.chunks,
-        },
-      });
-      toast.success(`"${draft.title}" indexed — ${draft.chunks.length} chunks`);
-      navigate({ to: "/library" });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ingestion failed");
-      setStep("preview");
+
+      // 2. Duplicate check
+      try {
+        const dup = await checkDupFn({ data: { title, author: author || undefined, isbn: isbn || undefined } });
+        if (dup.exists) {
+          updateFile(item.id, { status: "duplicate", error: "Already in library" });
+          continue;
+        }
+      } catch { /* skip dup check on error */ }
+
+      // 3. Index
+      updateFile(item.id, { status: "indexing" });
+      try {
+        await addDigitalFn({
+          data: {
+            title,
+            author: author || undefined,
+            isbn: isbn || undefined,
+            chunks,
+          },
+        });
+        updateFile(item.id, { status: "done", chunks: chunks.length });
+      } catch (e) {
+        updateFile(item.id, { status: "failed", error: e instanceof Error ? e.message : "Indexing failed" });
+      }
     }
+
+    setStep("done");
   };
 
-  if (step === "upload") {
+  const doneCount = files.filter((f) => f.status === "done").length;
+  const isProcessing = step === "processing";
+
+  if (step === "select") {
     return (
       <div className="space-y-4">
         <BackButton onClick={onBack} />
-        <DigitalUploadStep parsing={parsing} onFile={handleFile} />
-      </div>
-    );
-  }
 
-  if (step === "preview" && draft) {
-    return (
-      <div className="space-y-4">
-        <BackButton onClick={() => setStep("upload")} />
-        <div className="rounded-lg border border-border p-3 space-y-3">
-          <div className="flex items-center gap-2">
-            <Upload className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-              {draft.fileType === "pdf" ? "PDF" : "ePub"} · {draft.chunks.length} chunks extracted
-            </span>
-          </div>
-          <Field
-            id="d-title"
-            label="Title"
-            value={draft.title}
-            onChange={(v) => setDraft((d) => d && { ...d, title: v })}
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.epub"
+            multiple
+            className="hidden"
+            onChange={(e) => e.target.files && addFiles(e.target.files)}
           />
-          <Field
-            id="d-author"
-            label="Author"
-            optional
-            value={draft.author}
-            onChange={(v) => setDraft((d) => d && { ...d, author: v })}
-            placeholder="Author name"
-          />
-          <Field
-            id="d-isbn"
-            label="ISBN"
-            optional
-            value={draft.isbn}
-            onChange={(v) => setDraft((d) => d && { ...d, isbn: v })}
-            placeholder="9780…"
+          <DropZone
+            label="Drop PDF or ePub files here"
+            hint="Multiple files supported · click to browse"
+            loading={false}
+            loadingLabel=""
+            onClick={() => fileRef.current?.click()}
+            icon={Upload}
           />
         </div>
-        <Button className="w-full" onClick={handleIngest}>
-          Add to library
-        </Button>
+
+        {files.length > 0 && (
+          <div className="space-y-1.5 max-h-60 overflow-y-auto">
+            {files.map((f) => (
+              <div key={f.id} className="flex items-center gap-2.5 rounded-md bg-muted px-3 py-2">
+                <Upload className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                <span className="text-[11px] truncate flex-1">{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(f.id)}
+                  className="text-[10px] text-muted-foreground hover:text-destructive active:opacity-60 transition-all cursor-pointer select-none shrink-0"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <Button className="w-full" onClick={handleProcess}>
+            Index {files.length} file{files.length !== 1 ? "s" : ""}
+          </Button>
+        )}
       </div>
     );
   }
 
+  // processing or done
   return (
     <div className="space-y-4">
-      <IngestingBanner label={`Embedding ${draft?.chunks.length ?? 0} chunks… this may take a minute.`} />
+      <div className="space-y-1.5 max-h-96 overflow-y-auto">
+        {files.map((f) => (
+          <div key={f.id} className="flex items-center gap-2.5 rounded-md bg-muted px-3 py-2">
+            <DigitalStatusIcon status={f.status} />
+            <span className="text-[11px] truncate flex-1">{f.name}</span>
+            <span className="text-[10px] text-muted-foreground shrink-0">
+              {f.status === "done" && `${f.chunks} chunks`}
+              {f.status === "duplicate" && "duplicate"}
+              {f.status === "scanned" && "scanned PDF"}
+              {f.status === "failed" && (f.error ?? "failed")}
+              {f.status === "parsing" && "parsing…"}
+              {f.status === "indexing" && "indexing…"}
+              {f.status === "queued" && "queued"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {step === "done" && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground text-center">
+            {doneCount} of {files.length} indexed successfully
+          </p>
+          <Button className="w-full" onClick={() => navigate({ to: "/library" })}>
+            Go to library
+          </Button>
+        </div>
+      )}
+
+      {isProcessing && (
+        <IngestingBanner label="Parsing and indexing files… do not close this tab." />
+      )}
     </div>
   );
 }
 
-function DigitalUploadStep({
-  parsing,
-  onFile,
-}: {
-  parsing: boolean;
-  onFile: (f: File) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) onFile(file);
-    if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) onFile(file);
-  };
-
-  return (
-    <div
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-    >
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".pdf,.epub"
-        className="hidden"
-        onChange={handleChange}
-      />
-      <DropZone
-        label="Drop PDF or ePub here"
-        hint="or click to choose a file"
-        loading={parsing}
-        loadingLabel="Parsing file…"
-        onClick={() => fileRef.current?.click()}
-        icon={Upload}
-      />
-    </div>
-  );
+function DigitalStatusIcon({ status }: { status: FileItemStatus }) {
+  if (status === "done") return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />;
+  if (status === "failed") return <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />;
+  if (status === "duplicate") return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />;
+  if (status === "scanned") return <XCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />;
+  if (status === "parsing" || status === "indexing") return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />;
+  return <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />;
 }
 
 // ─── Kindle library flow ──────────────────────────────────────────────────────
