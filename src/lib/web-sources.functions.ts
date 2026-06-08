@@ -189,11 +189,23 @@ export const ingestSubstack = createServerFn({ method: "POST" })
       if (!source) continue;
 
       try {
+        // Try to fetch full article HTML — RSS feeds only include a teaser for most posts
+        let fullContent = article.content;
+        if (article.url) {
+          try {
+            const { fetchWebArticle } = await import("@/lib/sources/web");
+            const fullArticle = await fetchWebArticle(article.url);
+            if (fullArticle.content.length > article.content.length * 1.5) {
+              fullContent = fullArticle.content;
+            }
+          } catch {}
+        }
+
         // Extract key ideas (Haiku)
-        const ideas = await extractKeyIdeas(anthropic, article.title, article.author, article.content);
+        const ideas = await extractKeyIdeas(anthropic, article.title, article.author, fullContent);
 
         // Paragraph chunks from body
-        const paragraphChunks = chunkByParagraph(article.content);
+        const paragraphChunks = chunkByParagraph(fullContent);
 
         const rawChunks: RawChunk[] = [
           ...ideas.map((idea, i) => ({
@@ -311,6 +323,104 @@ export const ingestGithubRepo = createServerFn({ method: "POST" })
     }
   });
 
+// ─── Preview YouTube video ────────────────────────────────────────────────────
+
+export const previewYouTubeVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => z.object({ url: z.string().url() }).parse(i))
+  .handler(async ({ data }): Promise<WebSourcePreview> => {
+    const { fetchYouTubeVideo } = await import("@/lib/sources/youtube");
+    const video = await fetchYouTubeVideo(data.url);
+    return {
+      title: video.title,
+      description: video.transcriptAvailable
+        ? `Transcript available — by ${video.author ?? "unknown"}`
+        : `No transcript — by ${video.author ?? "unknown"}`,
+      url: video.url,
+    };
+  });
+
+// ─── Ingest YouTube video ─────────────────────────────────────────────────────
+
+export const ingestYouTubeVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => z.object({ url: z.string().url() }).parse(i))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const { data: existing } = await supabase
+      .from("sources")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("url", data.url)
+      .maybeSingle();
+    if (existing) throw new Error("This video is already in your library");
+
+    const { fetchYouTubeVideo, chunkTranscript } = await import("@/lib/sources/youtube");
+    const video = await fetchYouTubeVideo(data.url);
+
+    const content = video.transcript ?? video.description;
+    if (!content || content.length < 50) {
+      throw new Error("No transcript or description available for this video");
+    }
+
+    const { data: source } = await supabase
+      .from("sources")
+      .insert({
+        user_id: userId,
+        source_type: "web_article",
+        title: video.title,
+        author: video.author ?? null,
+        url: video.url,
+        description: video.description.slice(0, 300) || null,
+        ingest_status: "processing",
+        authority_tier: 3,
+      })
+      .select("id")
+      .single();
+
+    if (!source) throw new Error("Failed to create source");
+
+    try {
+      const ideas = await extractKeyIdeas(anthropic, video.title, video.author, content);
+
+      const textChunks = video.transcript
+        ? chunkTranscript(video.transcript)
+        : chunkByParagraph(video.description);
+
+      const rawChunks: RawChunk[] = [
+        ...ideas.map((idea, i) => ({
+          content: idea,
+          chunkType: "key_idea" as const,
+          sectionTitle: `Key idea ${i + 1}`,
+          chunkIndex: i,
+        })),
+        ...textChunks.map((p, i) => ({
+          content: p,
+          chunkType: "passage" as const,
+          sectionTitle: `Section ${i + 1}`,
+          chunkIndex: ideas.length + i,
+        })),
+      ];
+
+      await ingestChunks(supabase as Parameters<typeof ingestChunks>[0], userId, source.id, rawChunks);
+
+      await supabase
+        .from("sources")
+        .update({ ingest_status: "complete", total_chunks: rawChunks.length, last_ingested: new Date().toISOString() })
+        .eq("id", source.id);
+
+      return { sourceId: source.id as string, chunks: rawChunks.length };
+    } catch (err) {
+      await supabase
+        .from("sources")
+        .update({ ingest_status: "failed", ingest_error: String(err) })
+        .eq("id", source.id);
+      throw err;
+    }
+  });
+
 // ─── Preview web article ──────────────────────────────────────────────────────
 
 export const previewWebArticle = createServerFn({ method: "POST" })
@@ -399,4 +509,120 @@ export const ingestWebArticle = createServerFn({ method: "POST" })
         .eq("id", source.id);
       throw err;
     }
+  });
+
+// ─── Sync Substack feeds ──────────────────────────────────────────────────────
+// Infers which newsletters you follow from existing substack sources, fetches
+// the latest articles from each feed, and indexes any not already in the library.
+
+export const syncSubstackFeeds = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const { data: substackSources } = await supabase
+      .from("sources")
+      .select("url")
+      .eq("user_id", userId)
+      .eq("source_type", "substack");
+
+    // Derive unique newsletter handles/roots from indexed article URLs
+    const newsletters = new Set<string>();
+    for (const { url } of substackSources ?? []) {
+      if (!url) continue;
+      try {
+        const u = new URL(url);
+        const subMatch = u.hostname.match(/^([a-z0-9-]+)\.substack\.com$/i);
+        if (subMatch) {
+          newsletters.add(subMatch[1]);
+        } else {
+          newsletters.add(`${u.protocol}//${u.hostname}`);
+        }
+      } catch {}
+    }
+
+    if (newsletters.size === 0) return { synced: 0, checked: 0 };
+
+    const { fetchSubstackFeed } = await import("@/lib/sources/rss");
+    const { fetchWebArticle } = await import("@/lib/sources/web");
+
+    // All already-indexed URLs for fast duplicate check
+    const { data: allIndexed } = await supabase
+      .from("sources")
+      .select("url")
+      .eq("user_id", userId);
+    const indexedUrls = new Set((allIndexed ?? []).map((s) => s.url).filter(Boolean));
+
+    let synced = 0;
+
+    for (const handle of newsletters) {
+      try {
+        const feed = await fetchSubstackFeed(handle);
+        // Check up to 3 latest articles to catch bursts
+        const candidates = feed.articles.slice(0, 3).filter((a) => a.url && !indexedUrls.has(a.url));
+
+        for (const article of candidates) {
+          const { data: source } = await supabase
+            .from("sources")
+            .insert({
+              user_id: userId,
+              source_type: "substack",
+              title: article.title,
+              author: article.author ?? feed.newsletterTitle,
+              url: article.url,
+              publication_date: article.publishedDate ?? null,
+              description: null,
+              ingest_status: "processing",
+              authority_tier: 3,
+            })
+            .select("id")
+            .single();
+
+          if (!source) continue;
+          indexedUrls.add(article.url);
+
+          try {
+            let fullContent = article.content;
+            try {
+              const full = await fetchWebArticle(article.url);
+              if (full.content.length > article.content.length * 1.5) fullContent = full.content;
+            } catch {}
+
+            const ideas = await extractKeyIdeas(anthropic, article.title, article.author, fullContent);
+            const paragraphChunks = chunkByParagraph(fullContent);
+
+            const rawChunks: RawChunk[] = [
+              ...ideas.map((idea, i) => ({
+                content: idea,
+                chunkType: "key_idea" as const,
+                sectionTitle: `Key idea ${i + 1}`,
+                chunkIndex: i,
+              })),
+              ...paragraphChunks.map((p, i) => ({
+                content: p,
+                chunkType: "passage" as const,
+                sectionTitle: `Section ${i + 1}`,
+                chunkIndex: ideas.length + i,
+              })),
+            ];
+
+            await ingestChunks(supabase as Parameters<typeof ingestChunks>[0], userId, source.id, rawChunks);
+            await supabase
+              .from("sources")
+              .update({ ingest_status: "complete", total_chunks: rawChunks.length, last_ingested: new Date().toISOString() })
+              .eq("id", source.id);
+
+            synced++;
+          } catch (err) {
+            await supabase
+              .from("sources")
+              .update({ ingest_status: "failed", ingest_error: String(err) })
+              .eq("id", source.id);
+          }
+        }
+      } catch {}
+    }
+
+    return { synced, checked: newsletters.size };
   });

@@ -14,6 +14,7 @@ export type Citation = {
   sourceId: string;
   title: string;
   author: string | null;
+  url: string | null;
   chapterTitle: string | null;
   relevance: number;
   rank: number;
@@ -72,6 +73,7 @@ type MatchedChunk = {
   source_type: string;
   title: string;
   author: string | null;
+  url: string | null;
   chapter_title: string | null;
   content: string;
   chunk_type: string;
@@ -674,6 +676,7 @@ export const sendNudge = createServerFn({ method: "POST" })
           sourceId: chunk.source_id,
           title: chunk.title,
           author: chunk.author,
+          url: chunk.url ?? null,
           chapterTitle: chunk.chapter_title,
           relevance: p.relevance_score,
           rank: rank + 1,

@@ -41,6 +41,8 @@ import {
   ingestGithubRepo,
   previewWebArticle,
   ingestWebArticle,
+  previewYouTubeVideo,
+  ingestYouTubeVideo,
   type WebSourcePreview,
 } from "@/lib/web-sources.functions";
 import type { PdfExtractResult } from "@/lib/sources/pdf";
@@ -1045,6 +1047,8 @@ function WebFlow({ onBack }: { onBack: () => void }) {
 
   const previewUrlFn = useServerFn(previewWebArticle);
   const ingestUrlFn = useServerFn(ingestWebArticle);
+  const previewYouTubeFn = useServerFn(previewYouTubeVideo);
+  const ingestYouTubeFn = useServerFn(ingestYouTubeVideo);
   const previewSubstackFn = useServerFn(previewSubstack);
   const ingestSubstackFn = useServerFn(ingestSubstack);
   const previewGithubFn = useServerFn(previewGithubRepo);
@@ -1062,8 +1066,20 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     setPreview(null);
   };
 
-  // Extract substack handle from full URL or bare handle
+  // Extract substack handle from full URL or bare handle.
+  // Returns null for specific article URLs (/p/ path) — those go to ingestWebArticle.
   const extractSubstackHandle = (val: string): string | null => {
+    // substack.com/@username (new Substack profile/reader format)
+    const atMatch = val.match(/substack\.com\/@([a-z0-9_-]+)/i);
+    if (atMatch) return atMatch[1];
+
+    // Don't match specific article URLs (/p/ path)
+    try {
+      const u = new URL(val.startsWith("http") ? val : `https://${val}`);
+      if (u.pathname.startsWith("/p/")) return null;
+    } catch {}
+
+    // username.substack.com subdomain format
     const m = val.match(/([a-z0-9-]+)\.substack\.com/i);
     return m ? m[1] : null;
   };
@@ -1072,6 +1088,9 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     /youtube\.com\/@|youtube\.com\/c\/|youtube\.com\/channel\//i.test(val) &&
     !val.includes("watch?v=") &&
     !val.includes("youtu.be/");
+
+  const isYouTubeVideo = (val: string) =>
+    /youtube\.com\/watch\?.*v=|youtu\.be\/[a-zA-Z0-9_-]{11}/i.test(val);
 
   const isHomepageUrl = (val: string) => {
     try {
@@ -1129,7 +1148,9 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     try {
       const activeTab = substackHandle ? "substack" : val.includes("github.com/") ? "github" : tab;
       const activeVal = substackHandle ?? val;
-      if (activeTab === "url") {
+      if (activeTab === "url" && isYouTubeVideo(activeVal)) {
+        setPreview(await previewYouTubeFn({ data: { url: activeVal } }));
+      } else if (activeTab === "url") {
         setPreview(await previewUrlFn({ data: { url: activeVal } }));
       } else if (activeTab === "substack") {
         setPreview(await previewSubstackFn({ data: { handle: activeVal } }));
@@ -1147,13 +1168,16 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     if (!preview) return;
     setIngesting(true);
     try {
-      if (tab === "url") {
+      if (tab === "url" && isYouTubeVideo(input.trim())) {
+        const r = await ingestYouTubeFn({ data: { url: input.trim() } });
+        toast.success(`Video indexed — ${r.chunks} chunks`);
+      } else if (tab === "url") {
         const r = await ingestUrlFn({ data: { url: input.trim() } });
         toast.success(`Article indexed — ${r.chunks} chunks`);
       } else if (tab === "substack") {
-        // Pass full URL for custom domains, bare handle for .substack.com
+        // Extract handle when possible; fall back to full URL for custom domains
         const val = input.trim();
-        const handle = val.startsWith("http") ? val : (extractSubstackHandle(val) ?? val);
+        const handle = extractSubstackHandle(val) ?? (val.startsWith("http") ? val : val);
         const r = await ingestSubstackFn({ data: { handle } });
         toast.success(`${r.ingested.length} article${r.ingested.length !== 1 ? "s" : ""} indexed`);
       } else {

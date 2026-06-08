@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
-import { BookOpen, Plus, Loader2, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { BookOpen, Plus, Loader2, AlertCircle, CheckCircle2, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { listSources, deleteSource, type SourceRow } from "@/lib/sources.functions";
+import { syncSubstackFeeds } from "@/lib/web-sources.functions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -132,15 +133,36 @@ function BookRow({
 
 function Library() {
   const fetchSources = useServerFn(listSources);
+  const syncFn = useServerFn(syncSubstackFeeds);
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
+  const load = () =>
     fetchSources({})
       .then((result) => setSources(Array.isArray(result) ? result : []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+
+  useEffect(() => { load(); }, []);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const r = await syncFn({});
+      if (r.synced > 0) {
+        toast.success(`${r.synced} new article${r.synced !== 1 ? "s" : ""} indexed from ${r.checked} newsletter${r.checked !== 1 ? "s" : ""}`);
+        setLoading(true);
+        await load();
+      } else {
+        toast.success(`All ${r.checked} newsletter${r.checked !== 1 ? "s" : ""} up to date`);
+      }
+    } catch {
+      toast.error("Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -154,12 +176,18 @@ function Library() {
             </span>
           )}
         </div>
-        <Link to="/import">
-          <Button size="sm" variant="outline">
-            <Plus className="h-3 w-3" />
-            Import
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={handleSync} disabled={syncing} title="Sync Substack feeds">
+            <RefreshCw className={cn("h-3 w-3", syncing && "animate-spin")} />
+            {syncing ? "Syncing…" : "Sync feeds"}
           </Button>
-        </Link>
+          <Link to="/import">
+            <Button size="sm" variant="outline">
+              <Plus className="h-3 w-3" />
+              Import
+            </Button>
+          </Link>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-5">

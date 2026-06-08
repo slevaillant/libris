@@ -35,6 +35,7 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
 }
 
@@ -100,7 +101,12 @@ export async function fetchSubstackFeed(handleOrUrl: string): Promise<RssFeedMet
   const res = await fetch(feedUrl, {
     headers: { "User-Agent": "Libris/1.0 (personal knowledge indexer)" },
   });
-  if (!res.ok) throw new Error(`Could not fetch feed for "${handleOrUrl}" (HTTP ${res.status})`);
+  if (!res.ok) {
+    if (res.status === 404 && !handleOrUrl.startsWith("http")) {
+      throw new Error(`No newsletter found at ${handleOrUrl}.substack.com — if they use a custom domain, paste their newsletter URL directly (e.g. lennysnewsletter.com)`);
+    }
+    throw new Error(`Could not fetch feed for "${handleOrUrl}" (HTTP ${res.status})`);
+  }
 
   const xml = await res.text();
 

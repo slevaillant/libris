@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, BookOpen, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, Send, BookOpen, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { sendNudge, summarizeConversation, type Citation, type ConversationTurn } from "@/lib/chat.functions";
@@ -28,6 +28,14 @@ function CitationsPanel({ citations }: { citations: Citation[] }) {
   const [open, setOpen] = useState(false);
   if (citations.length === 0) return null;
 
+  // Deduplicate by sourceId, keeping the highest relevance per source
+  const unique = Object.values(
+    citations.reduce<Record<string, Citation>>((acc, c) => {
+      if (!acc[c.sourceId] || c.relevance > acc[c.sourceId].relevance) acc[c.sourceId] = c;
+      return acc;
+    }, {}),
+  );
+
   return (
     <div className="mt-2 rounded-md border border-border/60 overflow-hidden">
       <button
@@ -37,14 +45,34 @@ function CitationsPanel({ citations }: { citations: Citation[] }) {
       >
         {open ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
         <BookOpen className="h-3 w-3 shrink-0" />
-        {citations.length} source{citations.length !== 1 ? "s" : ""}
+        {unique.length} source{unique.length !== 1 ? "s" : ""}
       </button>
 
       {open && (
         <div className="border-t border-border/60 divide-y divide-border/40">
-          {citations.map((c) => (
+          {unique.map((c) => (
             <div key={c.chunkId} className="px-3 py-2 space-y-0.5">
-              <p className="text-[11px] font-medium leading-snug">{c.title}</p>
+              <div className="flex items-start justify-between gap-2">
+                <a
+                  href={c.url ?? `/book/${c.sourceId}`}
+                  target={c.url ? "_blank" : undefined}
+                  rel={c.url ? "noopener noreferrer" : undefined}
+                  className="text-[11px] font-medium leading-snug hover:underline"
+                >
+                  {c.title}
+                </a>
+                {c.url && (
+                  <a
+                    href={c.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label="Open original source"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
               <p className="text-[10px] text-muted-foreground">
                 {[c.author, c.chapterTitle].filter(Boolean).join(" · ")}
               </p>
