@@ -65,6 +65,7 @@ libris/
     PROMPTS.md
     GRANOLA.md                   ← READ THIS before touching digest pipeline
     TOKEN_BUDGET.md              ← READ THIS before choosing a model or writing a prompt
+    EVALS.md                     ← Evaluation framework — metrics, golden set, diagnostic path
     SECURITY.md
   PRD.md
   PLAN.md
@@ -82,6 +83,7 @@ libris/
 | `docs/DATA_MODEL.md` | Touching the database, writing migrations, adding columns |
 | `docs/GRANOLA.md` | Touching the digest pipeline |
 | `docs/PROMPTS.md` | Writing or editing any system prompt |
+| `docs/EVALS.md` | Adding metrics, changing eval thresholds, building the golden set |
 
 ## Agent Architecture
 
