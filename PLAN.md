@@ -283,8 +283,120 @@ User logs in to Libris in the browser → extension reads the Supabase session f
 
 ---
 
-## Phase 13 — Open Source Preparation
-*Goal: repo is clean, documented, and safe to make public.*
+## Phase 13 — Observability & Evals
+*Goal: know with confidence whether Lumen is working well, catch regressions before users notice them, and have data to justify model/prompt changes.*
+
+Libris is a **Knowledge Base Assistant** — per the eval hierarchy, that means three layers matter:
+`LLM Quality` → `RAG Retrieval` → `RAG Generation`. Fix the foundation before adding floors.
+
+---
+
+### What to instrument (observability — passive, always-on)
+
+These are logged automatically per nudge. The `nudges` table already stores `latency_ms`, `cache_hit`, and `tokens_used`. Extend with:
+
+| Signal | Where to log | Target |
+|---|---|---|
+| Response latency | `nudges.latency_ms` ✓ | < 5s p95 |
+| Cache hit rate | `nudges.cache_hit` ✓ | > 20% after 30 days |
+| Token cost per nudge | `nudges.tokens_used` | Track trend, alert on spikes |
+| Coverage quality | `nudges` new col `coverage_quality` | < 20% `thin` responses |
+| Citation count | `nudge_citations` ✓ | Avg > 1.5 per nudge |
+| Sources contributing | `nudge_citations.source_id` distinct | Detect if one source dominates |
+| Hallucination flag | `nudges` new col `flagged` | User-triggered, manual review |
+
+---
+
+### Eval metrics to implement (periodic, not real-time)
+
+#### Layer 1 — LLM Quality
+
+**Hallucination Rate** (target < 5%)
+- Create a 20-question golden dataset with known answers from your library
+- Run after every model or prompt change
+- Flag any response that cites a source but includes claims not present in that source
+- Tool: Claude Sonnet as judge — `"Does this response contain any claim not supported by the cited passages?"`
+
+**Response Latency** (target p95 < 5s)
+- Already tracked. Set up a weekly SQL query: `SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FROM nudges WHERE created_at > now() - interval '7 days'`
+
+**Instruction Following** (target > 95%)
+- Lumen has voice rules: no affirmations, cite every claim, end with a suggestion
+- Automated check: scan `response_text` for banned openers ("Certainly", "Great question", "Of course")
+
+---
+
+#### Layer 2 — RAG Retrieval
+
+**Precision@K** (target > 0.7 at K=5)
+- For the golden dataset, manually label which chunks should be retrieved for each question
+- Run `match_chunks` and check how many of the top 5 are in the expected set
+- A drop here explains why Lumen gives vague answers — it's not finding the right passages
+
+**Mean Reciprocal Rank (MRR)** (target > 0.7)
+- Does the most relevant chunk appear in position 1, 2, or 5?
+- If MRR is low, the relevance ranking in `match_chunks` (authority_tier + cosine similarity) needs tuning
+
+**Coverage gaps** (track over time)
+- `coverage_quality = 'thin'` rate per topic category
+- High thin rate on a topic = tell the user to add more sources on that topic
+
+---
+
+#### Layer 3 — RAG Generation
+
+**Faithfulness / Groundedness** (target > 90%)
+- Every claim in the response must trace to a cited source
+- Automated: Claude Sonnet judge reads `(response_text, retrieved_passages)` and flags unsupported claims
+- This is the #1 trust metric — one hallucinated fact erodes confidence in everything else
+
+**Answer Relevance** (target > 0.8)
+- Does the response actually address what was asked?
+- Automated: embed question + response, check cosine similarity > 0.75
+- Low score = Lumen is drifting off-topic or over-contextualising
+
+**Context Utilisation**
+- Of the 5 retrieved passages, how many are actually referenced in the response?
+- If Lumen consistently ignores retrieved passages, the L4 prompt format needs work
+
+---
+
+### Golden dataset — build this first
+Before writing any eval code, create `evals/golden_set.json`:
+```json
+[
+  {
+    "question": "What does Andy Grove say about one-on-ones?",
+    "expected_source": "high output management",
+    "expected_topics": ["one-on-one", "manager", "subordinate"],
+    "should_not_contain": ["hallucinated claim example"]
+  }
+]
+```
+Start with 20 questions covering your most-used topics. Run against the live system weekly. Any regression on the golden set blocks a deploy.
+
+---
+
+### Tooling recommendations (from the notebook)
+- **LLM-as-judge**: Claude Sonnet grading responses (faithfulness, relevance, instruction following)
+- **Embedding similarity**: cosine distance between question and answer for relevance scoring
+- **No BLEU**: paraphrase-heavy responses like Lumen's score poorly on BLEU despite being correct — use LLM judge instead
+- **Human review queue**: flag low-confidence responses (`coverage_quality = 'thin'`) for periodic human review
+
+---
+
+### Implementation order
+1. Instrument `coverage_quality` column in `nudges` table (1 migration)
+2. Build `evals/golden_set.json` with 20 questions (manual work, no code)
+3. Write `evals/run_evals.ts` — runs golden set against live API, outputs precision/faithfulness/relevance scores
+4. Add `flagged` column to `nudges` — user can flag a bad response from the chat UI
+5. Weekly SQL dashboard query (paste into Supabase SQL editor)
+6. Automated regression check in CI: run golden set on every PR that touches prompt files
+
+---
+
+## Phase 14 — Open Source Preparation
+*Goal: repo is clean, documented, safe to make public, and evals are passing.*
 
 - [ ] Audit for hardcoded values (user IDs, emails, org IDs)
 - [ ] Verify `.gitignore` covers all secret files
