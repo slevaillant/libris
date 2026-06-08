@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpen, MessageCircle, Settings, LogOut } from "lucide-react";
+import { BookOpen, MessageCircle, Mail, Settings, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import type { UserProfile } from "@/lib/profile.functions";
@@ -9,6 +9,7 @@ type Props = { profile: UserProfile | null };
 const NAV = [
   { to: "/library", label: "Library", icon: BookOpen, enabled: true },
   { to: "/chat",    label: "Chat",    icon: MessageCircle, enabled: true },
+  { to: "/digest",  label: "Digest",  icon: Mail,        enabled: true },
   { to: "/settings", label: "Settings", icon: Settings, enabled: false },
 ] as const;
 

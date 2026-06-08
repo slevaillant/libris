@@ -382,6 +382,7 @@ Start with 20 questions covering your most-used topics. Run against the live sys
 - **Embedding similarity**: cosine distance between question and answer for relevance scoring
 - **No BLEU**: paraphrase-heavy responses like Lumen's score poorly on BLEU despite being correct — use LLM judge instead
 - **Human review queue**: flag low-confidence responses (`coverage_quality = 'thin'`) for periodic human review
+- **Arize** (recommended platform): observability + eval tracking platform. Integrates with Claude/Anthropic SDK. Good for tracing RAG pipelines, tracking eval metrics over time, and setting up alerts on regressions. Evaluate when moving to production.
 
 ---
 
@@ -491,3 +492,21 @@ npm run test          # unit tests must pass
 npm run build         # build must be clean
 npm run lint          # no lint errors
 ```
+
+---
+
+## Production Deployment Notes (to be detailed when ready)
+
+Key areas that need a proper plan before going live with real users:
+
+- **Custom domain** — wire `libris.app` (or chosen domain) to Cloudflare Workers
+- **Supabase production project** — separate from the dev project used today; migrate schema + seed data
+- **Secrets management** — all API keys via `wrangler secret put`, never in code
+- **Rate limiting** — protect the `/api/*` endpoints (Cloudflare WAF rules)
+- **Error monitoring** — Sentry or Cloudflare Workers observability for unhandled exceptions
+- **Arize integration** — trace every nudge (RAG retrieval + synthesis) for eval tracking
+- **CI/CD** — GitHub Actions already set up; add golden-set eval run as a required check
+- **Billing guardrails** — Anthropic + Gemini spend alerts; abort if daily spend > threshold
+- **Auth hardening** — review Supabase Auth settings (session length, MFA option)
+- **GDPR / data residency** — Supabase EU region, data deletion endpoint for users
+- **SLA for ingestion** — define max acceptable time from import to searchable in chat
