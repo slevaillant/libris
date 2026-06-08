@@ -91,12 +91,16 @@ function parseItems(xml: string): RssArticle[] {
   });
 }
 
-export async function fetchSubstackFeed(handle: string): Promise<RssFeedMeta> {
-  const feedUrl = `https://${handle}.substack.com/feed`;
+export async function fetchSubstackFeed(handleOrUrl: string): Promise<RssFeedMeta> {
+  // Accept full URLs (custom domains like news.aakashg.com) or bare handles (lenny)
+  const feedUrl = handleOrUrl.startsWith("http")
+    ? handleOrUrl.replace(/\/$/, "").replace(/\/feed$/, "") + "/feed"
+    : `https://${handleOrUrl}.substack.com/feed`;
+
   const res = await fetch(feedUrl, {
     headers: { "User-Agent": "Libris/1.0 (personal knowledge indexer)" },
   });
-  if (!res.ok) throw new Error(`Could not fetch feed for "${handle}" (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Could not fetch feed for "${handleOrUrl}" (HTTP ${res.status})`);
 
   const xml = await res.text();
 
@@ -113,7 +117,7 @@ export async function fetchSubstackFeed(handle: string): Promise<RssFeedMeta> {
       if (!feedMatch) return null;
       return cdataOrText(feedMatch[1], "title");
     })() ??
-    `${handle} (Substack)`;
+    `${handleOrUrl} (Newsletter)`;
 
   const description =
     ((): string | null => {

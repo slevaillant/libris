@@ -1068,11 +1068,31 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     return m ? m[1] : null;
   };
 
+  const isYouTubeChannel = (val: string) =>
+    /youtube\.com\/@|youtube\.com\/c\/|youtube\.com\/channel\//i.test(val) &&
+    !val.includes("watch?v=") &&
+    !val.includes("youtu.be/");
+
+  const isHomepageUrl = (val: string) => {
+    try {
+      const { pathname } = new URL(val);
+      return pathname === "/" || pathname === "";
+    } catch {
+      return false;
+    }
+  };
+
   const handlePreview = async () => {
     let val = input.trim();
     if (!val) return;
 
-    // Auto-detect Substack URLs in any tab
+    // Block YouTube channel pages — we can only index specific videos
+    if (isYouTubeChannel(val)) {
+      toast.error("Paste a specific video URL (e.g. youtube.com/watch?v=…), not a channel page. The Chrome extension (coming soon) will handle channels.");
+      return;
+    }
+
+    // Auto-detect Substack URLs (.substack.com domain)
     const substackHandle = extractSubstackHandle(val);
     if (substackHandle && tab !== "substack") {
       setTab("substack");
@@ -1084,6 +1104,24 @@ function WebFlow({ onBack }: { onBack: () => void }) {
     if (tab === "url" && val.includes("github.com/")) {
       setTab("github");
       setInput(val);
+    }
+
+    // Auto-detect newsletter homepage URLs (custom domains like news.aakashg.com)
+    // A homepage URL with no article path is almost certainly a newsletter — try RSS
+    if (tab === "url" && !substackHandle && val.startsWith("http") && isHomepageUrl(val)) {
+      setPreviewing(true);
+      setPreview(null);
+      try {
+        const feedPreview = await previewSubstackFn({ data: { handle: val } });
+        setTab("substack");
+        setInput(val);
+        setPreview(feedPreview);
+        return;
+      } catch {
+        // Not a newsletter feed — fall through to normal URL fetch
+      } finally {
+        setPreviewing(false);
+      }
     }
 
     setPreviewing(true);
@@ -1113,7 +1151,9 @@ function WebFlow({ onBack }: { onBack: () => void }) {
         const r = await ingestUrlFn({ data: { url: input.trim() } });
         toast.success(`Article indexed — ${r.chunks} chunks`);
       } else if (tab === "substack") {
-        const handle = extractSubstackHandle(input.trim()) ?? input.trim();
+        // Pass full URL for custom domains, bare handle for .substack.com
+        const val = input.trim();
+        const handle = val.startsWith("http") ? val : (extractSubstackHandle(val) ?? val);
         const r = await ingestSubstackFn({ data: { handle } });
         toast.success(`${r.ingested.length} article${r.ingested.length !== 1 ? "s" : ""} indexed`);
       } else {
