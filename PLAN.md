@@ -61,6 +61,7 @@ Never start a phase until the previous one is fully working in production.
 - [x] Migration 009: `match_chunks` RPC
 - [x] Migration 010: `match_memories` RPC (semantic_cache only)
 - [x] Migration 011: All RLS policies
+- [x] Migration 012: `match_chunks` extended to return `url` column (for citation links)
 - [x] Verify RLS: test with two users — no cross-contamination
 - [x] Verify: `match_chunks` returns correct ranked results for a test query
 
@@ -153,19 +154,21 @@ Manual entry (paste a quote) is the Phase 5 baseline. These richer import paths 
 
 ---
 
-## Phase 7 — Web Sources (Substack + GitHub + Articles)
-*Goal: user can subscribe to Substacks, add GitHub repos, and import URLs.*
+## Phase 7 — Web Sources (Substack + GitHub + Articles + YouTube) ✓
+*Goal: user can subscribe to Substacks, add GitHub repos, import URLs, and index YouTube videos.*
 
-- [ ] `source_subscriptions` table + CRUD
-- [ ] Substack RSS ingestion (`src/lib/sources/rss.ts`)
-- [ ] GitHub repo ingestion (`src/lib/sources/github.ts`) — README + docs/ only
-- [ ] Web article ingestion (`src/lib/sources/web.ts`) — Readability parse
-- [ ] Daily cron: RSS fetch + re-index changed repos (Cloudflare Agents SDK `schedule()`)
-- [ ] Substack subscription UI: add handle → preview → subscribe
-- [ ] GitHub repo UI: add URL → preview README → confirm
-- [ ] URL import UI: paste link → instant ingest → confirmation
+- [x] Substack RSS ingestion (`src/lib/sources/rss.ts`) — full article content fetched from article URL (not truncated RSS teaser); hex HTML entity decoding fixed
+- [x] GitHub repo ingestion (`src/lib/sources/github.ts`) — README + docs/ only
+- [x] Web article ingestion (`src/lib/sources/web.ts`) — article/main/body extraction
+- [x] YouTube video ingestion (`src/lib/sources/youtube.ts`) — youtubei/v1/player API (bypasses GDPR consent), oEmbed for metadata, manual caption track preferred over auto-generated, transcript chunked into ~2-min / 300-word segments
+- [x] Substack URL routing: `*.substack.com/p/` article URLs → single article ingest; `substack.com/@username` → handle extraction; custom-domain newsletters → RSS feed by root URL; 404 error message guides user to paste newsletter URL directly
+- [x] Substack feed sync: `syncSubstackFeeds` server function infers followed newsletters from existing `source_type='substack'` sources, checks up to 3 latest articles per feed, indexes new ones; "Sync feeds" button in library header for on-demand sync
+- [x] Daily cron (07:00 UTC) via Cloudflare Workers `scheduled` handler — iterates all users, runs Substack feed sync automatically (`SUPABASE_SERVICE_KEY` stored as Cloudflare secret)
+- [x] Import UI: URL tab auto-detects YouTube videos, Substack feeds, GitHub repos, and custom newsletter domains; channels blocked with helpful message
+- [x] Chat citations: deduplicated by `sourceId` (highest relevance kept), clickable links — external URL for web sources, internal `/book/:id` for books
 - [ ] Verify: Substack article key ideas retrievable and ranked correctly
 - [ ] Verify: GitHub repo chunks retrievable with correct heading structure
+- [ ] Verify: YouTube transcript segments retrievable with correct source attribution
 
 ---
 
@@ -262,7 +265,7 @@ Phase 7 requires the user to manually copy a URL and paste it into the import pa
 | Substack article | URL contains `.substack.com/p/` | Existing RSS article flow |
 | GitHub repo | URL matches `github.com/owner/repo` | Existing GitHub flow |
 | Web article | Any other HTTP page | Existing URL ingestion flow |
-| YouTube video | URL contains `youtube.com/watch` | New: YouTube transcript via `youtube-transcript` API |
+| YouTube video | URL contains `youtube.com/watch` | ✓ Already implemented in import page — youtubei API + transcript |
 
 ### YouTube transcript ingestion
 - Fetch auto-generated or manual transcript via YouTube's timedtext API (no API key needed for public videos)

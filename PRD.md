@@ -51,9 +51,10 @@ Index every source type into a unified semantic knowledge base.
 |---|---|---|
 | Physical book | Cover scan → identify → AI chapter summaries | Chapter + section |
 | E-book / PDF | Text extraction + chunking | Paragraph / section |
-| Substack | RSS auto-fetch (daily cron) | Article + key passages |
+| Substack | RSS auto-fetch; daily cron + manual "Sync feeds" button | Article + key passages |
 | GitHub repo | README + wiki + discussions | Section |
 | Web article | URL paste → instant ingestion | Article + key passages |
+| YouTube video | youtubei API → transcript + key ideas; falls back to description | ~2-min transcript segments |
 | User highlights | Manual input, linked to source | Passage |
 
 ### 2. Bounty Indexing (Physical Library)
@@ -64,6 +65,7 @@ User pastes a thought, conversation fragment, or question. The system:
 - Extracts themes and concepts
 - Searches all sources in parallel
 - Returns cited recommendations with a synthesized connection
+- Each citation is a clickable link — external URL for articles/videos, internal source page for books
 - Responds in <3 seconds
 
 Example input: *"Had a meeting about scaling our team from 8 to 30 people while keeping speed. What do I have?"*

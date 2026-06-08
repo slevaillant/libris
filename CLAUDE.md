@@ -51,6 +51,7 @@ libris/
         github.ts                ← GitHub repo ingestion
         web.ts                   ← URL → article extraction
         pdf.ts                   ← PDF/ePub parsing
+        youtube.ts               ← YouTube video ingestion (youtubei API + transcript)
   sync/
     index.ts                     ← Local vault sync (if needed)
   supabase/
