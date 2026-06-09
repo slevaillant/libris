@@ -423,8 +423,10 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
       if (chapters.length === 0) {
         toast.info("Could not read chapters — try a clearer photo or enter manually");
       } else {
-        setChaptersText(chapters.join("\n"));
-        toast.success(`${chapters.length} chapters extracted`);
+        setChaptersText((prev) =>
+          prev.trim() ? `${prev.trim()}\n${chapters.join("\n")}` : chapters.join("\n"),
+        );
+        toast.success(`${chapters.length} chapters extracted — scan next page if needed`);
       }
     } catch {
       toast.error("Could not scan table of contents");
