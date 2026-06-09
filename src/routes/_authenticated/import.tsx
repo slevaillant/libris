@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   extractBookFromCover,
+  extractTOCFromPhoto,
   lookupBook,
   suggestChapters,
   addPhysicalBook,
@@ -376,7 +377,9 @@ function PhysicalIdentifyStep({
 function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => void }) {
   const navigate = useNavigate();
   const suggestFn = useServerFn(suggestChapters);
+  const tocFn = useServerFn(extractTOCFromPhoto);
   const addFn = useServerFn(addPhysicalBook);
+  const tocRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState(draft.title);
   const [author, setAuthor] = useState(draft.author);
@@ -384,18 +387,16 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
   const [shelfLocation, setShelfLocation] = useState(draft.shelfLocation);
   const [chaptersText, setChaptersText] = useState("");
   const [suggesting, setSuggesting] = useState(false);
+  const [scanningTOC, setScanningTOC] = useState(false);
   const [adding, setAdding] = useState(false);
 
   const handleSuggest = async () => {
-    if (!title.trim()) {
-      toast.error("Enter a title first");
-      return;
-    }
+    if (!title.trim()) { toast.error("Enter a title first"); return; }
     setSuggesting(true);
     try {
       const chapters = await suggestFn({ data: { title, author } });
       if (chapters.length === 0) {
-        toast.info("No chapter data found — enter them manually");
+        toast.info("No chapter data found — scan the TOC or enter manually");
       } else {
         setChaptersText(chapters.join("\n"));
       }
@@ -406,19 +407,37 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
     }
   };
 
+  const handleTOCScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScanningTOC(true);
+    try {
+      const base64 = await new Promise<string>((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res((reader.result as string).split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type as "image/jpeg" | "image/png" | "image/webp";
+      const chapters = await tocFn({ data: { imageBase64: base64, mimeType } });
+      if (chapters.length === 0) {
+        toast.info("Could not read chapters — try a clearer photo or enter manually");
+      } else {
+        setChaptersText(chapters.join("\n"));
+        toast.success(`${chapters.length} chapters extracted`);
+      }
+    } catch {
+      toast.error("Could not scan table of contents");
+    } finally {
+      setScanningTOC(false);
+      if (tocRef.current) tocRef.current.value = "";
+    }
+  };
+
   const handleAdd = async () => {
-    const chapters = chaptersText
-      .split("\n")
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (!title.trim()) {
-      toast.error("Title is required");
-      return;
-    }
-    if (chapters.length === 0) {
-      toast.error("Add at least one chapter");
-      return;
-    }
+    const chapters = chaptersText.split("\n").map((c) => c.trim()).filter(Boolean);
+    if (!title.trim()) { toast.error("Title is required"); return; }
+    if (chapters.length === 0) { toast.error("Add at least one chapter"); return; }
     setAdding(true);
     try {
       await addFn({
@@ -440,10 +459,13 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
     }
   };
 
+  const busy = suggesting || scanningTOC || adding;
+
   return (
     <div className="space-y-4">
       {adding && <IngestingBanner label="Generating chapter summaries and indexing… ~10 s per book." />}
 
+      {/* Cover + title/author */}
       <div className="flex gap-3">
         {draft.coverUrl && (
           <img
@@ -454,40 +476,50 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
         )}
         <div className="flex-1 space-y-2">
           <Field id="r-title" label="Title" value={title} onChange={setTitle} />
-          <Field
-            id="r-author"
-            label="Author"
-            value={author}
-            onChange={setAuthor}
-            placeholder="Author name"
-          />
+          <Field id="r-author" label="Author" value={author} onChange={setAuthor} placeholder="Author name" />
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      {/* ISBN + shelf — stack vertically on mobile */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <Field id="r-isbn" label="ISBN" optional value={isbn} onChange={setIsbn} placeholder="9780…" />
-        <Field
-          id="r-shelf"
-          label="Shelf"
-          optional
-          value={shelfLocation}
-          onChange={setShelfLocation}
-          placeholder="Shelf B, row 2"
-        />
+        <Field id="r-shelf" label="Shelf" optional value={shelfLocation} onChange={setShelfLocation} placeholder="Shelf B, row 2" />
       </div>
 
+      {/* Chapters */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <Label htmlFor="r-chapters">Chapters</Label>
-          <button
-            type="button"
-            onClick={handleSuggest}
-            disabled={suggesting || adding}
-            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            Suggest
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Scan TOC photo */}
+            <input
+              ref={tocRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              className="hidden"
+              onChange={handleTOCScan}
+            />
+            <button
+              type="button"
+              onClick={() => tocRef.current?.click()}
+              disabled={busy}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {scanningTOC ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
+              Scan TOC
+            </button>
+            {/* AI suggest fallback */}
+            <button
+              type="button"
+              onClick={handleSuggest}
+              disabled={busy}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              Suggest
+            </button>
+          </div>
         </div>
         <textarea
           id="r-chapters"
@@ -499,15 +531,15 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
           className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 resize-none leading-relaxed placeholder:text-muted-foreground/50"
         />
         <p className="text-[10px] text-muted-foreground">
-          One chapter per line. Lumen will generate a semantic summary for each.
+          Scan TOC photo for accurate chapters, or use Suggest as a fallback. One chapter per line.
         </p>
       </div>
 
       <div className="flex gap-2 pt-1">
-        <Button variant="outline" onClick={onBack} disabled={adding} className="w-20">
+        <Button variant="outline" onClick={onBack} disabled={busy} className="w-20">
           Back
         </Button>
-        <Button onClick={handleAdd} disabled={adding} className="flex-1">
+        <Button onClick={handleAdd} disabled={busy} className="flex-1">
           {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add to library"}
         </Button>
       </div>

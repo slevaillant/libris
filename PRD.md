@@ -49,7 +49,7 @@ Index every source type into a unified semantic knowledge base.
 
 | Source | Method | Granularity |
 |---|---|---|
-| Physical book | Cover scan → identify → AI chapter summaries | Chapter + section |
+| Physical book | Cover scan → identify → TOC photo scan (or AI suggest fallback) → chapter summaries | Chapter + section |
 | E-book / PDF | Text extraction + chunking | Paragraph / section |
 | Substack | RSS auto-fetch; daily cron + manual "Sync feeds" button | Article + key passages |
 | GitHub repo | README + wiki + discussions | Section |
@@ -66,6 +66,7 @@ User pastes a thought, conversation fragment, or question. The system:
 - Searches all sources in parallel
 - Returns cited recommendations with a synthesized connection
 - Each citation is a clickable link — external URL for articles/videos, internal source page for books
+- Thumbs up/down feedback on every response stored for evaluation
 - Responds in <3 seconds
 
 Example input: *"Had a meeting about scaling our team from 8 to 30 people while keeping speed. What do I have?"*

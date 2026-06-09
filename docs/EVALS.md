@@ -180,6 +180,42 @@ ORDER BY lag_days DESC;
 
 ---
 
+### 10. User Feedback Rate
+**Layer**: Generation + Retrieval  
+**Target**: helpful rate > 70% · unhelpful rate < 10%
+
+Users rate each Lumen response via thumbs up/down in the chat UI. Stored in `nudges.helpful` (true/false/null). Especially valuable for physical books where chapter summaries are AI-recalled rather than extracted from real text.
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE helpful IS NOT NULL) AS rated,
+  ROUND(COUNT(*) FILTER (WHERE helpful = true) * 100.0 /
+    NULLIF(COUNT(*) FILTER (WHERE helpful IS NOT NULL), 0), 1) AS helpful_pct,
+  ROUND(COUNT(*) FILTER (WHERE helpful = false) * 100.0 /
+    NULLIF(COUNT(*) FILTER (WHERE helpful IS NOT NULL), 0), 1) AS unhelpful_pct,
+  ROUND(COUNT(*) FILTER (WHERE helpful IS NOT NULL) * 100.0 / COUNT(*), 1) AS feedback_rate_pct
+FROM nudges
+WHERE created_at > now() - interval '30 days';
+```
+
+**Failure signal**: Unhelpful rate spiking on physical book queries → chapter summaries are hallucinated (fix: TOC photo scanning for accurate chapter extraction). Consistent thumbs-down on a specific source type → ingestion quality issue for that type.
+
+**Physical book quality drill-down** — identify which books get the most negative feedback:
+```sql
+SELECT s.title, s.author, s.source_type,
+  COUNT(*) FILTER (WHERE n.helpful = false) AS thumbs_down,
+  COUNT(*) FILTER (WHERE n.helpful = true) AS thumbs_up
+FROM nudges n
+JOIN nudge_citations nc ON nc.nudge_id = n.id
+JOIN sources s ON s.id = nc.source_id
+WHERE n.helpful IS NOT NULL
+GROUP BY s.title, s.author, s.source_type
+ORDER BY thumbs_down DESC
+LIMIT 20;
+```
+
+---
+
 ## Golden Dataset
 
 Location: `evals/golden_set.json`  

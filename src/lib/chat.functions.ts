@@ -548,6 +548,24 @@ function formatPreferencesForL2(preferences: MemoryRow[]): string {
   return `\nKNOWN PREFERENCES:\n${preferences.map((p) => `- ${p.content}`).join("\n")}`;
 }
 
+// ─── Rate a nudge (thumbs up / down) ─────────────────────────────────────────
+
+export const rateNudge = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z.object({ nudgeId: z.string().uuid(), helpful: z.boolean() }).parse(i),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await supabase
+      .from("nudges")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update({ helpful: data.helpful, flagged: !data.helpful } as any)
+      .eq("id", data.nudgeId)
+      .eq("user_id", userId);
+    return { ok: true };
+  });
+
 // ─── sendNudge ────────────────────────────────────────────────────────────────
 
 const ConversationTurnSchema = z.object({

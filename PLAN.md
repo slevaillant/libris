@@ -92,6 +92,9 @@ Never start a phase until the previous one is fully working in production.
 - [x] Gemini embedding helper (`src/lib/gemini.ts`)
 - [x] Library page: shows books with cover, author, status indicator
 - [x] Book detail page: shows chapters (collapsible) + status
+- [x] TOC photo scan: `extractTOCFromPhoto` (Haiku vision) — photographs table of contents page, extracts chapter titles accurately; replaces unreliable AI-recall suggest for physical books
+- [x] Mobile-optimized review step: "Scan TOC" + "Suggest" buttons, responsive ISBN/shelf grid, mobile camera input
+- [x] Feedback loop: thumbs up/down on every chat response stored in `nudges.helpful`; User Feedback Rate metric added to `docs/EVALS.md`
 - [ ] Verify: chapter summaries are embedded and retrievable via `match_chunks`
 
 ---

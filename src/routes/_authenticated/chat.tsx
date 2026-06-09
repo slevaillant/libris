@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, BookOpen, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { Loader2, Send, BookOpen, ChevronDown, ChevronRight, ExternalLink, ThumbsUp, ThumbsDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { sendNudge, summarizeConversation, type Citation, type ConversationTurn } from "@/lib/chat.functions";
+import { sendNudge, summarizeConversation, rateNudge, type Citation, type ConversationTurn } from "@/lib/chat.functions";
 import { getProfile } from "@/lib/profile.functions";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,7 @@ type Message = {
   content: string;
   citations?: Citation[];
   coverageQuality?: "strong" | "partial" | "thin";
+  nudgeId?: string;
 };
 
 // ─── Citation panel ───────────────────────────────────────────────────────────
@@ -93,6 +94,60 @@ function CitationsPanel({ citations }: { citations: Citation[] }) {
   );
 }
 
+// ─── Feedback buttons ─────────────────────────────────────────────────────────
+
+function FeedbackButtons({ nudgeId }: { nudgeId: string }) {
+  const rateFn = useServerFn(rateNudge);
+  const [rating, setRating] = useState<boolean | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (helpful: boolean) => {
+    if (rating !== null || submitting) return;
+    setSubmitting(true);
+    try {
+      await rateFn({ data: { nudgeId, helpful } });
+      setRating(helpful);
+    } catch {
+      toast.error("Could not save feedback");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1 mt-1 px-1">
+      <button
+        type="button"
+        onClick={() => submit(true)}
+        disabled={submitting || rating !== null}
+        aria-label="Helpful"
+        className={cn(
+          "p-1 rounded transition-colors",
+          rating === true
+            ? "text-green-500"
+            : "text-muted-foreground/40 hover:text-green-500",
+        )}
+      >
+        <ThumbsUp className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={() => submit(false)}
+        disabled={submitting || rating !== null}
+        aria-label="Not helpful"
+        className={cn(
+          "p-1 rounded transition-colors",
+          rating === false
+            ? "text-destructive"
+            : "text-muted-foreground/40 hover:text-destructive",
+        )}
+      >
+        <ThumbsDown className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Single message bubble ────────────────────────────────────────────────────
 
 function ChatMessage({ message, librarianName }: { message: Message; librarianName: string }) {
@@ -124,6 +179,7 @@ function ChatMessage({ message, librarianName }: { message: Message; librarianNa
         <p className="text-xs leading-relaxed whitespace-pre-wrap">{message.content}</p>
       </div>
       {message.citations && <CitationsPanel citations={message.citations} />}
+      {message.nudgeId && <FeedbackButtons nudgeId={message.nudgeId} />}
     </div>
   );
 }
@@ -255,6 +311,7 @@ function ChatPage() {
         content: result.response,
         citations: result.citations,
         coverageQuality: result.coverageQuality,
+        nudgeId: result.nudgeId,
       };
       setMessages((prev) => [...prev, assistantMsg]);
 

@@ -145,6 +145,68 @@ export const lookupBook = createServerFn({ method: "POST" })
     });
   });
 
+// ─── Extract chapters from a TOC photo (Haiku vision) ────────────────────────
+
+export const extractTOCFromPhoto = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        imageBase64: z.string(),
+        mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data }) => {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: [
+        {
+          type: "text" as const,
+          text: "You are a book indexing agent. Extract chapter and section titles from table of contents photos. Return only meaningful chapter/section titles — skip page numbers, headers, footers, and decorative text. Use the extract_chapters tool only.",
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+      tools: [
+        {
+          name: "extract_chapters",
+          description: "Extract chapter and section titles from a table of contents image",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              chapters: {
+                type: "array" as const,
+                items: { type: "string" as const },
+                description: "Chapter and section titles in order, exactly as written",
+              },
+            },
+            required: ["chapters"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool" as const, name: "extract_chapters" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image" as const,
+              source: { type: "base64" as const, media_type: data.mimeType, data: data.imageBase64 },
+            },
+            { type: "text" as const, text: "Extract all chapter and section titles from this table of contents." },
+          ],
+        },
+      ],
+    });
+
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") throw new Error("Could not extract chapters from photo");
+    return (toolUse.input as { chapters: string[] }).chapters;
+  });
+
 // ─── Suggest chapters for a book (Haiku) ─────────────────────────────────────
 
 export const suggestChapters = createServerFn({ method: "POST" })
