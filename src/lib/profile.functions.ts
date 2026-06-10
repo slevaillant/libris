@@ -12,6 +12,8 @@ export type UserProfile = {
   digestEmail: string | null;
   digestTime: string;
   onboardingCompleted: boolean;
+  topicsMd: string | null;
+  topicsUpdatedAt: string | null;
 };
 
 export const getProfile = createServerFn({ method: "POST" })
@@ -38,6 +40,8 @@ export const getProfile = createServerFn({ method: "POST" })
       digestEmail: data.digest_email,
       digestTime: data.digest_time,
       onboardingCompleted: data.onboarding_completed,
+      topicsMd: data.topics_md ?? null,
+      topicsUpdatedAt: data.topics_updated_at ?? null,
     } as UserProfile;
   });
 

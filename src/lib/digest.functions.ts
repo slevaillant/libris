@@ -13,6 +13,7 @@ export type MeetingThemes = {
   decisions: string[];
   open_questions: string[];
   topics: string[];
+  topicTitles?: string[]; // short display labels; topics[] holds the RAG search query
 };
 
 export type DigestRunSummary = {
@@ -32,6 +33,65 @@ export type DigestThemeRow = {
   themeType: string;
   synthesis: string | null;
 };
+
+// ─── Topics parser ───────────────────────────────────────────────────────────
+
+/**
+ * Extract active (unchecked) topics from TOPICS.md.
+ * Supports two formats:
+ *   New: - [ ] date | **Bold Title** | _source_
+ *        > **Question à explorer :** <question text>
+ *   Legacy: - [ ] date | #hashtag-title | _source_
+ *
+ * Returns the "Question à explorer" text when present (better for RAG embedding),
+ * otherwise the title. Returns at most 8 topics.
+ */
+export function parseTopicsFromMd(md: string): string[] {
+  const section = md.match(/<!-- TOPICS_START -->([\s\S]*?)(?:<!-- TOPICS_DONE -->|$)/)?.[1] ?? md;
+  const lines = section.split("\n");
+  const topics: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // New format: - [ ] date | **Title** | _source_
+    const boldMatch = line.match(/^- \[ \] .+\| \*\*([^*]+)\*\*/);
+    if (boldMatch) {
+      const title = boldMatch[1].trim();
+      // Look ahead up to 5 lines for "Question à explorer"
+      let query = title;
+      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        if (lines[j].startsWith("- [")) break;
+        const qMatch = lines[j].match(/Question [àa]\s+explorer\s*:\*\*\s*(.+)/i);
+        if (qMatch) { query = qMatch[1].trim(); break; }
+      }
+      topics.push(query);
+      continue;
+    }
+
+    // Legacy format: - [ ] date | #hashtag-title | _source_
+    const hashMatch = line.match(/^- \[ \] .+\| (#[\wÀ-ž-]+)/);
+    if (hashMatch) topics.push(hashMatch[1].slice(1).replace(/-/g, " "));
+  }
+
+  return topics.slice(0, 8);
+}
+
+/**
+ * Extract display titles only (for the UI chips).
+ * Returns bold titles or cleaned hashtags — NOT the full question text.
+ */
+export function parseTopicTitlesFromMd(md: string): string[] {
+  const section = md.match(/<!-- TOPICS_START -->([\s\S]*?)(?:<!-- TOPICS_DONE -->|$)/)?.[1] ?? md;
+  const titles: string[] = [];
+  for (const line of section.split("\n")) {
+    const boldMatch = line.match(/^- \[ \] .+\| \*\*([^*]+)\*\*/);
+    if (boldMatch) { titles.push(boldMatch[1].trim()); continue; }
+    const hashMatch = line.match(/^- \[ \] .+\| (#[\wÀ-ž-]+)/);
+    if (hashMatch) titles.push(hashMatch[1].slice(1).replace(/-/g, " "));
+  }
+  return titles.slice(0, 8);
+}
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +122,8 @@ type MatchedChunk = {
   chapter_title: string | null;
   content: string;
   similarity: number;
+  url: string | null;
+  source_type: string;
 };
 
 async function searchTheme(
@@ -104,7 +166,7 @@ async function synthesiseSection(
 
   const response = await anthropic.messages.create({
     model: "claude-opus-4-7",
-    max_tokens: 512,
+    max_tokens: 1024,
     messages: [
       {
         role: "user",
@@ -139,15 +201,22 @@ async function runDigestPipeline(
   userId: string,
   themes: MeetingThemes,
   runDate: string,
+  displayName = "there",
+  librarianName = "Lumen",
 ): Promise<{ digestRunId: string; sections: DigestSection[]; citationCount: number }> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  // Flatten all theme types into searchable strings, tagged by type
-  const themeEntries: { text: string; type: string }[] = [
-    ...themes.problems.map((t) => ({ text: t, type: "problem" })),
-    ...themes.decisions.map((t) => ({ text: t, type: "decision" })),
-    ...themes.open_questions.map((t) => ({ text: t, type: "open_question" })),
-    ...themes.topics.map((t) => ({ text: t, type: "topic" })),
+  // Flatten all theme types into searchable strings, tagged by type.
+  // `text` is used for RAG embedding; `label` is shown to the user.
+  const themeEntries: { text: string; type: string; label: string }[] = [
+    ...themes.problems.map((t) => ({ text: t, type: "problem", label: t })),
+    ...themes.decisions.map((t) => ({ text: t, type: "decision", label: t })),
+    ...themes.open_questions.map((t) => ({ text: t, type: "open_question", label: t })),
+    ...themes.topics.map((t, i) => ({
+      text: t,
+      type: "topic",
+      label: themes.topicTitles?.[i] ?? t, // short title when available
+    })),
   ].slice(0, 8); // max 8 themes per digest
 
   // Create digest_run record
@@ -169,27 +238,28 @@ async function runDigestPipeline(
   let citationCount = 0;
 
   for (let i = 0; i < themeEntries.length; i++) {
-    const { text: theme, type: themeType } = themeEntries[i];
+    const { text: searchQuery, type: themeType, label: displayTheme } = themeEntries[i];
     const chunks = chunksByTheme[i];
 
     if (chunks.length === 0 && themeType === "topic") continue; // skip thin topic matches
 
-    const { synthesis, readingSuggestion } = await synthesiseSection(anthropic, "there", "Lumen", theme, chunks);
+    const { synthesis, readingSuggestion } = await synthesiseSection(anthropic, displayName, librarianName, searchQuery, chunks);
 
     const citations = chunks.slice(0, 3).map((c) => ({
       title: c.title,
       author: c.author,
       chapterTitle: c.chapter_title,
+      url: c.url ?? null,
     }));
     citationCount += citations.length;
 
-    sections.push({ theme, synthesis, citations, readingSuggestion });
+    sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion });
 
     // Store theme in DB (anonymised — no transcript content)
     await supabase.from("digest_themes").insert({
       digest_run_id: digestRunId,
       user_id: userId,
-      theme_text: theme,
+      theme_text: displayTheme,
       theme_type: themeType,
       synthesis,
     });
@@ -204,7 +274,7 @@ async function runDigestPipeline(
   return { digestRunId, sections, citationCount };
 }
 
-// ─── runDigest — full pipeline (Granola themes injected here when available) ──
+// ─── runDigest — reads topics_md from profile when no themes supplied ─────────
 
 export const runDigest = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -215,7 +285,7 @@ export const runDigest = createServerFn({ method: "POST" })
         decisions: z.array(z.string()).default([]),
         open_questions: z.array(z.string()).default([]),
         topics: z.array(z.string()).default([]),
-      }),
+      }).optional(),
       sendEmail: z.boolean().default(true),
     }).parse(i),
   )
@@ -224,7 +294,7 @@ export const runDigest = createServerFn({ method: "POST" })
 
     const { data: profile } = await supabase
       .from("user_profiles")
-      .select("display_name, librarian_name, digest_email, digest_enabled, timezone")
+      .select("display_name, librarian_name, digest_email, digest_enabled, timezone, topics_md")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -232,12 +302,29 @@ export const runDigest = createServerFn({ method: "POST" })
     const librarianName = (profile?.librarian_name as string) ?? "Lumen";
     const digestEmail = profile?.digest_email as string | null;
 
+    // Use provided themes, or fall back to topics from TOPICS.md.
+    // When reading from TOPICS.md, store short titles separately from the search queries.
+    const themes: MeetingThemes = data.themes ?? (() => {
+      const md = profile?.topics_md as string | null;
+      return {
+        problems: [],
+        decisions: [],
+        open_questions: [],
+        topics: md ? parseTopicsFromMd(md) : [],        // full questions → RAG
+        topicTitles: md ? parseTopicTitlesFromMd(md) : [], // short titles → display
+      };
+    })();
+
+    if (themes.topics.length === 0 && themes.problems.length === 0 && themes.open_questions.length === 0) {
+      throw new Error("No topics found — sync your TOPICS.md first (npx tsx sync/push-topics.ts)");
+    }
+
     const runDate = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
 
     const { digestRunId, sections, citationCount } = await runDigestPipeline(
       supabase as Parameters<typeof runDigestPipeline>[0],
       userId,
-      data.themes,
+      themes,
       runDate,
     );
 

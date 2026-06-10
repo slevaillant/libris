@@ -8,6 +8,39 @@ import { syncSubstackFeeds } from "@/lib/web-sources.functions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+// ─── Filter ───────────────────────────────────────────────────────────────────
+
+type LibraryFilter = "all" | "book" | "ebook" | "web" | "substack" | "github";
+
+const FILTER_LABELS: Record<LibraryFilter, string> = {
+  all: "All",
+  book: "Books",
+  ebook: "eBooks",
+  web: "Web",
+  substack: "Substack",
+  github: "GitHub",
+};
+
+function matchesFilter(s: SourceRow, f: LibraryFilter) {
+  if (f === "all") return true;
+  if (f === "book") return s.sourceType === "physical_book" || s.sourceType === "highlight_only";
+  if (f === "ebook") return s.sourceType === "ebook" || s.sourceType === "pdf";
+  if (f === "web") return s.sourceType === "web_article";
+  if (f === "substack") return s.sourceType === "substack";
+  if (f === "github") return s.sourceType === "github_repo";
+  return true;
+}
+
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  physical_book: "Book",
+  ebook: "eBook",
+  pdf: "PDF",
+  substack: "Newsletter",
+  github_repo: "GitHub",
+  web_article: "Article",
+  highlight_only: "Highlights",
+};
+
 export const Route = createFileRoute("/_authenticated/library")({
   component: Library,
 });
@@ -94,11 +127,8 @@ function BookRow({
       </div>
 
       {/* Type pill */}
-      <span className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
-        "bg-muted text-muted-foreground",
-      )}>
-        {source.sourceType === "physical_book" ? "Book" : source.sourceType}
+      <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide bg-muted text-muted-foreground">
+        {SOURCE_TYPE_LABEL[source.sourceType] ?? source.sourceType}
       </span>
 
       {/* Delete */}
@@ -137,6 +167,7 @@ function Library() {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<LibraryFilter>("all");
 
   const load = () =>
     fetchSources({})
@@ -214,14 +245,53 @@ function Library() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-2 max-w-xl">
-            {sources.map((s) => (
-              <BookRow
-                key={s.id}
-                source={s}
-                onDeleted={(id) => setSources((prev) => prev.filter((x) => x.id !== id))}
-              />
-            ))}
+          <div className="space-y-4 max-w-xl">
+            {/* Filter pills — only show tabs that have at least one source */}
+            {(() => {
+              const tabs: LibraryFilter[] = ["all"];
+              if (sources.some((s) => s.sourceType === "physical_book" || s.sourceType === "highlight_only")) tabs.push("book");
+              if (sources.some((s) => s.sourceType === "ebook" || s.sourceType === "pdf")) tabs.push("ebook");
+              if (sources.some((s) => s.sourceType === "web_article")) tabs.push("web");
+              if (sources.some((s) => s.sourceType === "substack")) tabs.push("substack");
+              if (sources.some((s) => s.sourceType === "github_repo")) tabs.push("github");
+              if (tabs.length === 1) return null;
+              return (
+                <div className="flex gap-1 flex-wrap">
+                  {tabs.map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setActiveFilter(f)}
+                      className={cn(
+                        "rounded-full px-2.5 py-1 text-[10px] font-medium transition-colors cursor-pointer select-none",
+                        activeFilter === f
+                          ? "bg-foreground text-background"
+                          : "bg-muted text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {FILTER_LABELS[f]}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Source list */}
+            {sources.filter((s) => matchesFilter(s, activeFilter)).length === 0 ? (
+              <p className="text-center text-xs text-muted-foreground py-8">Nothing here yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {sources
+                  .filter((s) => matchesFilter(s, activeFilter))
+                  .map((s) => (
+                    <BookRow
+                      key={s.id}
+                      source={s}
+                      onDeleted={(id) => setSources((prev) => prev.filter((x) => x.id !== id))}
+                    />
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </div>

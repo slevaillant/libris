@@ -55,7 +55,7 @@ export async function sendEmail({
 export type DigestSection = {
   theme: string;
   synthesis: string;
-  citations: { title: string; author: string | null; chapterTitle: string | null }[];
+  citations: { title: string; author: string | null; chapterTitle: string | null; url: string | null }[];
   readingSuggestion: { title: string; chapter: string } | null;
 };
 
@@ -82,7 +82,11 @@ export function buildDigestEmail(
             .map(
               (c) => `
             <p style="font-size:12px;color:#374151;margin:4px 0;">
-              📚 <strong>${c.title}</strong>${c.author ? ` — ${c.author}` : ""}
+              ${c.url ? "🔗" : "📚"}
+              ${c.url
+                ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
+                : `<strong>${c.title}</strong>`
+              }${c.author ? ` — ${c.author}` : ""}
               ${c.chapterTitle ? `<br><span style="color:#6b7280;padding-left:18px;">${c.chapterTitle}</span>` : ""}
             </p>`,
             )
@@ -121,7 +125,7 @@ export function buildDigestEmail(
   </html>`;
 
   const text = sections
-    .map((s) => `${s.theme.toUpperCase()}\n\n${s.synthesis}\n\n${s.citations.map((c) => `• ${c.title}${c.chapterTitle ? ` — ${c.chapterTitle}` : ""}`).join("\n")}\n`)
+    .map((s) => `${s.theme.toUpperCase()}\n\n${s.synthesis}\n\n${s.citations.map((c) => `• ${c.title}${c.chapterTitle ? ` — ${c.chapterTitle}` : ""}${c.url ? `\n  ${c.url}` : ""}`).join("\n")}\n`)
     .join("\n---\n\n");
 
   return { subject, html, text };

@@ -71,7 +71,7 @@ export default {
       (async () => {
         const { createClient } = await import("@supabase/supabase-js");
         const { default: Anthropic } = await import("@anthropic-ai/sdk");
-        const { fetchSubstackFeed, stripHtml } = await import("./lib/sources/rss");
+        const { fetchSubstackFeed } = await import("./lib/sources/rss");
         const { fetchWebArticle } = await import("./lib/sources/web");
 
         const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
@@ -92,6 +92,86 @@ export default {
         for (const { user_id, url } of rows ?? []) {
           if (!byUser.has(user_id)) byUser.set(user_id, []);
           byUser.get(user_id)!.push(url);
+        }
+
+        // ── Daily digest for users with topics synced ────────────────────────
+        const { parseTopicsFromMd } = await import("./lib/digest.functions");
+        const { buildDigestEmail, sendEmail } = await import("./lib/email");
+        const { embed: embedOne } = await import("./lib/gemini");
+
+        const { data: digestProfiles } = await supabase
+          .from("user_profiles")
+          .select("user_id, display_name, librarian_name, digest_email, topics_md")
+          .eq("digest_enabled", true)
+          .not("topics_md", "is", null)
+          .not("digest_email", "is", null);
+
+        for (const p of digestProfiles ?? []) {
+          try {
+            const { parseTopicTitlesFromMd } = await import("./lib/digest.functions");
+            const topics = parseTopicsFromMd(p.topics_md as string);   // queries for RAG
+            const topicTitles = parseTopicTitlesFromMd(p.topics_md as string); // labels for display
+            if (topics.length === 0) continue;
+
+            const displayName = (p.display_name as string) ?? "there";
+            const librarianName = (p.librarian_name as string) ?? "Lumen";
+            const runDate = new Date().toLocaleDateString("en-CA");
+
+            // RAG: embed + search each topic
+            const sections: import("./lib/email").DigestSection[] = [];
+            let citationCount = 0;
+
+            const { data: run } = await supabase
+              .from("digest_runs")
+              .upsert({ user_id: p.user_id, run_date: runDate, meetings_found: 1, themes_found: topics.length }, { onConflict: "user_id,run_date" })
+              .select("id").single();
+            const digestRunId = run?.id as string ?? crypto.randomUUID();
+
+            for (let ti = 0; ti < Math.min(topics.length, 8); ti++) {
+              const searchQuery = topics[ti];
+              const displayTheme = topicTitles[ti] ?? searchQuery;
+
+              const embedding = await embedOne(searchQuery).catch(() => null);
+              if (!embedding) continue;
+              const { data: chunks } = await supabase.rpc("match_chunks", {
+                p_user_id: p.user_id, p_query_embedding: `[${embedding.join(",")}]`, p_match_count: 5, p_min_score: 0.50,
+              });
+              const matched = (chunks ?? []) as { chunk_id: string; source_id: string; title: string; author: string | null; chapter_title: string | null; content: string; similarity: number; url: string | null }[];
+
+              let synthesis = `My sources on "${displayTheme}" are thinner than I'd like.`;
+              if (matched.length > 0) {
+                const passages = matched.map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}${c.chapter_title ? `, ${c.chapter_title}` : ""}\n${c.content.slice(0, 400)}`).join("\n\n");
+                const res = await anthropic.messages.create({
+                  model: "claude-opus-4-7", max_tokens: 1024,
+                  messages: [{ role: "user", content: [
+                    { type: "text", text: `You are ${librarianName}, synthesising a morning digest for ${displayName}. Write one focused paragraph connecting this theme to the library passages. End with a specific reading suggestion.`, cache_control: { type: "ephemeral" } },
+                    { type: "text", text: `Theme: "${displayTheme}"\n\nSearch query used: "${searchQuery}"\n\nPassages:\n${passages}` },
+                  ]}],
+                });
+                const tb = res.content.find(b => b.type === "text");
+                if (tb?.type === "text") synthesis = tb.text;
+              }
+
+              const citations = matched.slice(0, 3).map(c => ({ title: c.title, author: c.author, chapterTitle: c.chapter_title, url: c.url ?? null }));
+              citationCount += citations.length;
+              sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion: null });
+
+              await supabase.from("digest_themes").insert({ digest_run_id: digestRunId, user_id: p.user_id, theme_text: displayTheme, theme_type: "topic", synthesis });
+            }
+
+            if (sections.length === 0) continue;
+
+            await supabase.from("digest_runs").update({ citations_found: citationCount }).eq("id", digestRunId);
+
+            const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+            const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections);
+            const result = await sendEmail({ to: p.digest_email as string, subject, html, text });
+
+            await supabase.from("digest_runs").update({ email_sent: result.sent, email_sent_at: result.sent ? new Date().toISOString() : null }).eq("id", digestRunId);
+            console.log(`Cron digest: user=${p.user_id} topics=${topics.length} sections=${sections.length} sent=${result.sent}`);
+          } catch (err) {
+            console.error(`Cron digest failed for user ${p.user_id}:`, err);
+          }
         }
 
         for (const [userId, urls] of byUser) {

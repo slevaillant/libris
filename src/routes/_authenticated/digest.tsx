@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   XCircle,
   BookOpen,
-  AlertCircle,
+  Hash,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,8 +20,10 @@ import { toast } from "sonner";
 import { getProfile, updateProfile } from "@/lib/profile.functions";
 import {
   triggerTestDigest,
+  runDigest,
   listDigestRuns,
   getDigestRun,
+  parseTopicTitlesFromMd,
   type DigestRunSummary,
   type DigestThemeRow,
 } from "@/lib/digest.functions";
@@ -42,6 +44,8 @@ function DigestSettings() {
   const [enabled, setEnabled] = useState(true);
   const [email, setEmail] = useState("");
   const [time, setTime] = useState("06:00");
+  const [topicsMd, setTopicsMd] = useState<string | null>(null);
+  const [topicsUpdatedAt, setTopicsUpdatedAt] = useState<string | null>(null);
 
   useEffect(() => {
     getProfileFn({})
@@ -50,10 +54,14 @@ function DigestSettings() {
         setEnabled(p.digestEnabled);
         setEmail(p.digestEmail ?? "");
         setTime(p.digestTime ?? "06:00");
+        setTopicsMd(p.topicsMd ?? null);
+        setTopicsUpdatedAt(p.topicsUpdatedAt ?? null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const activeTopics = topicsMd ? parseTopicTitlesFromMd(topicsMd) : [];
 
   const handleSave = async () => {
     setSaving(true);
@@ -157,10 +165,37 @@ function DigestSettings() {
         {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
       </Button>
 
-      <div className="rounded-lg border border-amber-400/30 bg-amber-500/5 px-3 py-2.5">
-        <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-relaxed">
-          <strong>Granola integration pending.</strong> The digest will automatically pull themes from yesterday's meetings once Granola is connected. Until then, use the test run below to preview the format.
-        </p>
+      {/* Topics status */}
+      <div className="rounded-lg border border-border p-3.5 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+            <p className="text-xs font-medium">Topics</p>
+          </div>
+          {topicsUpdatedAt && (
+            <span className="text-[10px] text-muted-foreground">
+              Synced {new Date(topicsUpdatedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        {activeTopics.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            Aucun topic actif.{" "}
+            <span className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">
+              npx tsx sync/push-topics.ts
+            </span>{" "}
+            pour synchroniser TOPICS.md.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {activeTopics.map((t) => (
+              <span key={t} className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -168,64 +203,94 @@ function DigestSettings() {
 
 // ─── Test run panel ───────────────────────────────────────────────────────────
 
+type TestSection = { theme: string; synthesis: string; citations: { title: string; author: string | null; chapterTitle: string | null; url: string | null }[] };
+
 function TestRunPanel({ onRanTest }: { onRanTest: () => void }) {
   const triggerFn = useServerFn(triggerTestDigest);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<{
-    sectionsCount: number;
-    citationCount: number;
-    sections: { theme: string; synthesis: string; citations: { title: string; author: string | null; chapterTitle: string | null }[] }[];
-  } | null>(null);
+  const runFn = useServerFn(runDigest);
+  const [running, setRunning] = useState<"sample" | "topics" | null>(null);
+  const [result, setResult] = useState<{ sectionsCount: number; citationCount: number; sections: TestSection[]; source: "sample" | "topics" } | null>(null);
 
-  const handleRun = async () => {
-    setRunning(true);
+  const handleSample = async () => {
+    setRunning("sample");
     setResult(null);
     try {
       const res = await triggerFn({});
-      setResult(res);
+      setResult({ ...res, source: "sample" });
       onRanTest();
-      toast.success(`Test digest complete — ${res.sectionsCount} sections, ${res.citationCount} citations`);
+      toast.success(`Sample digest — ${res.sectionsCount} sections, ${res.citationCount} citations`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Test digest failed");
     } finally {
-      setRunning(false);
+      setRunning(null);
     }
   };
 
+  const handleTopics = async () => {
+    setRunning("topics");
+    setResult(null);
+    try {
+      const res = await runFn({ data: { sendEmail: false } });
+      setResult({ sectionsCount: res.sectionsCount, citationCount: res.citationCount, sections: res.sections, source: "topics" });
+      onRanTest();
+      toast.success(`Digest from your topics — ${res.sectionsCount} sections, ${res.citationCount} citations`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No topics synced yet — run npx tsx sync/push-topics.ts first");
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const busy = running !== null;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-medium">Test run</p>
-          <p className="text-[10px] text-muted-foreground">
-            Runs the digest pipeline with predefined themes — no Granola needed.
-          </p>
+      <div className="space-y-2">
+        <p className="text-xs font-medium">Test run</p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={handleTopics} disabled={busy} className="flex-1">
+            {running === "topics" ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Running…</>
+            ) : (
+              <><Play className="h-3 w-3" /> My topics</>
+            )}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleSample} disabled={busy} className="flex-1 text-muted-foreground">
+            {running === "sample" ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Running…</>
+            ) : (
+              "Sample themes"
+            )}
+          </Button>
         </div>
-        <Button size="sm" variant="outline" onClick={handleRun} disabled={running}>
-          {running ? (
-            <><Loader2 className="h-3 w-3 animate-spin" /> Running…</>
-          ) : (
-            <><Play className="h-3 w-3" /> Run test</>
-          )}
-        </Button>
+        {result && (
+          <p className="text-[10px] text-muted-foreground">
+            {result.source === "topics" ? "From your TOPICS.md" : "Predefined sample themes"} · {result.sectionsCount} sections · {result.citationCount} citations
+          </p>
+        )}
       </div>
 
       {result && (
-        <div className="rounded-lg border border-border bg-card p-3 space-y-3">
-          <p className="text-[10px] text-muted-foreground">
-            {result.sectionsCount} sections · {result.citationCount} citations
-          </p>
+        <div className="space-y-6 pt-2">
           {result.sections.map((s, i) => (
-            <div key={i} className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
                 {s.theme}
               </p>
-              <p className="text-[11px] leading-relaxed">{s.synthesis}</p>
+              <p className="text-sm leading-relaxed">{s.synthesis}</p>
               {s.citations.length > 0 && (
-                <div className="space-y-0.5">
+                <div className="border-t border-border pt-3 space-y-2">
                   {s.citations.map((c, j) => (
-                    <p key={j} className="text-[10px] text-muted-foreground">
-                      📚 {c.title}{c.chapterTitle ? ` — ${c.chapterTitle}` : ""}
+                    <p key={j} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                      <span className="shrink-0 mt-px">{c.url ? "🔗" : "📚"}</span>
+                      <span>
+                        {c.url
+                          ? <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:opacity-80">{c.title}</a>
+                          : <span className="font-medium">{c.title}</span>
+                        }
+                        {c.author ? <span className="text-muted-foreground/70"> — {c.author}</span> : ""}
+                        {c.chapterTitle ? <span className="text-muted-foreground/60 block ml-0">{c.chapterTitle}</span> : ""}
+                      </span>
                     </p>
                   ))}
                 </div>

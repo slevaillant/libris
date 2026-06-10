@@ -523,6 +523,8 @@ export type Database = {
           reading_preferences: string | null
           semantic_cache_threshold: number
           timezone: string
+          topics_md: string | null
+          topics_updated_at: string | null
           updated_at: string
           user_id: string
         }
@@ -540,6 +542,8 @@ export type Database = {
           reading_preferences?: string | null
           semantic_cache_threshold?: number
           timezone?: string
+          topics_md?: string | null
+          topics_updated_at?: string | null
           updated_at?: string
           user_id: string
         }
@@ -557,6 +561,8 @@ export type Database = {
           reading_preferences?: string | null
           semantic_cache_threshold?: number
           timezone?: string
+          topics_md?: string | null
+          topics_updated_at?: string | null
           updated_at?: string
           user_id?: string
         }

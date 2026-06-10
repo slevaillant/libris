@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   BookOpen,
+  BookMarked,
   Camera,
   Search,
   PenLine,
@@ -34,6 +35,7 @@ import {
   addKindleBook,
   checkDuplicate,
   type BookCandidate,
+  type SourceRow,
 } from "@/lib/library.functions";
 import {
   previewSubstack,
@@ -46,6 +48,12 @@ import {
   ingestYouTubeVideo,
   type WebSourcePreview,
 } from "@/lib/web-sources.functions";
+import {
+  parseKindleHighlights,
+  bulkCreateHighlights,
+  type ParsedHighlight,
+} from "@/lib/highlights.functions";
+import { listSources } from "@/lib/sources.functions";
 import type { PdfExtractResult } from "@/lib/sources/pdf";
 import type { EpubExtractResult } from "@/lib/sources/epub";
 
@@ -55,7 +63,7 @@ export const Route = createFileRoute("/_authenticated/import")({
 
 // ─── Top-level mode ────────────────────────────────────────────────────────────
 
-type ImportMode = "physical" | "digital" | "kindle" | "web";
+type ImportMode = "physical" | "digital" | "kindle" | "highlights" | "web";
 
 // ─── Shared types ──────────────────────────────────────────────────────────────
 
@@ -106,6 +114,12 @@ function ModeSelector({ onSelect }: { onSelect: (m: ImportMode) => void }) {
       icon: Smartphone,
       label: "Kindle library",
       description: "Screenshot your Kindle library to bulk-add books",
+    },
+    {
+      id: "highlights",
+      icon: BookMarked,
+      label: "Kindle highlights",
+      description: "Import reading highlights from Kindle Notebook",
     },
     {
       id: "web",
@@ -1068,6 +1082,259 @@ function KindleFlow({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── Kindle highlights flow ───────────────────────────────────────────────────
+
+type HighlightsStep = "pick" | "paste" | "preview";
+type HighlightDraft = ParsedHighlight & { selected: boolean };
+
+const BOOK_SOURCE_TYPES = ["physical_book", "ebook", "pdf", "highlight_only"];
+
+function HighlightsFlow({ onBack }: { onBack: () => void }) {
+  const navigate = useNavigate();
+  const listFn = useServerFn(listSources);
+  const parseFn = useServerFn(parseKindleHighlights);
+  const bulkFn = useServerFn(bulkCreateHighlights);
+
+  const [step, setStep] = useState<HighlightsStep>("pick");
+  const [allBooks, setAllBooks] = useState<SourceRow[]>([]);
+  const [booksLoading, setBooksLoading] = useState(true);
+  const [bookSearch, setBookSearch] = useState("");
+  const [selectedBook, setSelectedBook] = useState<SourceRow | null>(null);
+  const [rawText, setRawText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [highlights, setHighlights] = useState<HighlightDraft[]>([]);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    listFn({})
+      .then((rows) => setAllBooks(rows.filter((s) => BOOK_SOURCE_TYPES.includes(s.sourceType))))
+      .catch(() => {})
+      .finally(() => setBooksLoading(false));
+  }, []);
+
+  const filteredBooks = allBooks.filter(
+    (s) =>
+      !bookSearch.trim() ||
+      s.title.toLowerCase().includes(bookSearch.toLowerCase()) ||
+      (s.author?.toLowerCase().includes(bookSearch.toLowerCase()) ?? false),
+  );
+
+  const handleParse = async () => {
+    if (!rawText.trim()) return;
+    setParsing(true);
+    try {
+      const parsed = await parseFn({ data: { text: rawText } });
+      if (parsed.length === 0) {
+        toast.error("No highlights found — check the pasted text and try again");
+        return;
+      }
+      setHighlights(parsed.map((h) => ({ ...h, selected: true })));
+      setStep("preview");
+    } catch {
+      toast.error("Could not parse highlights");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!selectedBook) return;
+    const toImport = highlights.filter((h) => h.selected);
+    if (toImport.length === 0) return;
+    setImporting(true);
+    try {
+      const { count } = await bulkFn({
+        data: {
+          sourceId: selectedBook.id,
+          highlights: toImport.map(({ content, chapter, note }) => ({ content, chapter, note })),
+        },
+      });
+      toast.success(`${count} highlight${count !== 1 ? "s" : ""} added to "${selectedBook.title}"`);
+      navigate({ to: "/library" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Import failed");
+      setImporting(false);
+    }
+  };
+
+  // ─── pick ─────────────────────────────────────────────────────────────────
+  if (step === "pick") {
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={onBack} />
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium" htmlFor="book-search">
+            Which book?
+          </label>
+          <Input
+            id="book-search"
+            value={bookSearch}
+            onChange={(e) => setBookSearch(e.target.value)}
+            placeholder="Search your library…"
+            autoFocus
+          />
+        </div>
+
+        {booksLoading ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : filteredBooks.length === 0 ? (
+          <p className="text-center text-[10px] text-muted-foreground py-4">
+            {bookSearch
+              ? "No match — add the book first via Physical book or Kindle library."
+              : "No books in library yet — add one first."}
+          </p>
+        ) : (
+          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+            {filteredBooks.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => {
+                  setSelectedBook(s);
+                  setStep("paste");
+                }}
+                className="flex w-full items-center gap-3 rounded-lg border border-border p-2.5 text-left hover:bg-accent/50 active:scale-[0.98] active:bg-accent/70 transition-all cursor-pointer select-none"
+              >
+                {s.coverUrl ? (
+                  <img src={s.coverUrl} alt={s.title} className="h-12 w-8 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="flex h-12 w-8 shrink-0 items-center justify-center rounded bg-muted">
+                    <BookOpen className="h-3.5 w-3.5 text-muted-foreground/40" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium truncate">{s.title}</p>
+                  {s.author && (
+                    <p className="text-[10px] text-muted-foreground truncate">{s.author}</p>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── paste ────────────────────────────────────────────────────────────────
+  if (step === "paste") {
+    return (
+      <div className="space-y-4">
+        <BackButton onClick={() => setStep("pick")} />
+
+        <div className="flex items-center gap-2.5 rounded-lg bg-muted px-3 py-2">
+          <BookMarked className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="text-[11px] font-medium truncate">{selectedBook?.title}</span>
+        </div>
+
+        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-1.5">
+          <p className="text-[10px] font-medium">How to get your highlights</p>
+          <ol className="text-[10px] text-muted-foreground space-y-0.5 list-decimal list-inside leading-relaxed">
+            <li>
+              Go to{" "}
+              <span className="font-medium text-foreground">read.amazon.com/notebook</span>
+            </li>
+            <li>Click on <span className="font-medium text-foreground">{selectedBook?.title}</span></li>
+            <li>Select all text (⌘A / Ctrl+A) and copy</li>
+            <li>Paste it below</li>
+          </ol>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium" htmlFor="highlights-paste">
+            Paste highlights
+          </label>
+          <textarea
+            id="highlights-paste"
+            value={rawText}
+            onChange={(e) => setRawText(e.target.value)}
+            placeholder={"\"Highlighted text...\"\nYour Highlight at location 100-102 | Added on…"}
+            rows={8}
+            disabled={parsing}
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 resize-none leading-relaxed placeholder:text-muted-foreground/50"
+          />
+        </div>
+
+        <Button className="w-full" onClick={handleParse} disabled={parsing || !rawText.trim()}>
+          {parsing ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              Parsing highlights…
+            </>
+          ) : (
+            "Parse highlights"
+          )}
+        </Button>
+      </div>
+    );
+  }
+
+  // ─── preview ──────────────────────────────────────────────────────────────
+  const selectedCount = highlights.filter((h) => h.selected).length;
+  return (
+    <div className="space-y-4">
+      <BackButton onClick={() => setStep("paste")} />
+
+      <p className="text-[10px] text-muted-foreground">
+        {highlights.length} highlights found. Deselect any you don't want to import.
+      </p>
+
+      <div className="space-y-1.5 max-h-96 overflow-y-auto">
+        {highlights.map((h, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() =>
+              setHighlights((prev) =>
+                prev.map((item, j) => (j === i ? { ...item, selected: !item.selected } : item)),
+              )
+            }
+            className={`flex w-full items-start gap-3 rounded-lg border p-2.5 text-left transition-colors cursor-pointer select-none ${
+              h.selected ? "border-border" : "border-border opacity-40"
+            }`}
+          >
+            <div
+              className={`mt-0.5 h-4 w-4 shrink-0 rounded border ${
+                h.selected ? "bg-foreground border-foreground" : "border-muted-foreground/40"
+              }`}
+            />
+            <div className="min-w-0 flex-1">
+              {h.chapter && (
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wide mb-0.5">
+                  {h.chapter}
+                </p>
+              )}
+              <p className="text-[10px] leading-relaxed line-clamp-3">{h.content}</p>
+              {h.note && (
+                <p className="text-[9px] text-muted-foreground/70 mt-0.5 italic">
+                  Note: {h.note}
+                </p>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <Button
+        className="w-full"
+        onClick={handleImport}
+        disabled={importing || selectedCount === 0}
+      >
+        {importing ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            Importing…
+          </>
+        ) : (
+          `Import ${selectedCount} highlight${selectedCount !== 1 ? "s" : ""}`
+        )}
+      </Button>
+    </div>
+  );
+}
+
 // ─── Web sources flow (URL / Substack / GitHub) ───────────────────────────────
 
 type WebTab = "url" | "substack" | "github";
@@ -1441,9 +1708,11 @@ function ImportPage() {
         ? "PDF or ePub"
         : mode === "kindle"
           ? "Kindle library"
-          : mode === "web"
-            ? "Web sources"
-            : "Import sources";
+          : mode === "highlights"
+            ? "Kindle highlights"
+            : mode === "web"
+              ? "Web sources"
+              : "Import sources";
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -1470,6 +1739,7 @@ function ImportPage() {
           {mode === "physical" && <PhysicalFlow onBack={() => setMode(null)} />}
           {mode === "digital" && <DigitalFlow onBack={() => setMode(null)} />}
           {mode === "kindle" && <KindleFlow onBack={() => setMode(null)} />}
+          {mode === "highlights" && <HighlightsFlow onBack={() => setMode(null)} />}
           {mode === "web" && <WebFlow onBack={() => setMode(null)} />}
         </div>
       </div>

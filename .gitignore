@@ -5,3 +5,8 @@ dist
 .dev.vars
 *.local
 .DS_Store
+
+# Personal data — never commit actual topics, notes, or local configs
+TOPICS.md
+sync/*.local.ts
+sync/.env

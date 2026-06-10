@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { embed } from "@/lib/gemini";
+import { embed, embedBatch } from "@/lib/gemini";
 
 export type HighlightRow = {
   id: string;
@@ -153,4 +154,148 @@ export const deleteHighlight = createServerFn({ method: "POST" })
     if (row?.chunk_id) {
       await supabase.from("chunks").delete().eq("id", row.chunk_id).eq("user_id", userId);
     }
+  });
+
+// ─── Shared type ─────────────────────────────────────────────────────────────
+
+export type ParsedHighlight = {
+  content: string;
+  chapter?: string;
+  note?: string;
+};
+
+// ─── Parse raw Kindle notebook text into structured highlights (Haiku) ────────
+
+export const parseKindleHighlights = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => z.object({ text: z.string().min(1).max(200_000) }).parse(i))
+  .handler(async ({ data }) => {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 8192,
+      system: [
+        {
+          type: "text" as const,
+          text: "You extract Kindle reading highlights from pasted notebook text. Each highlight is a quoted passage the reader marked. Identify the chapter or section heading that precedes each highlight. Include personal notes if present.",
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+      tools: [
+        {
+          name: "extract_highlights",
+          description: "Extract structured highlights from Kindle notebook text",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              highlights: {
+                type: "array" as const,
+                items: {
+                  type: "object" as const,
+                  properties: {
+                    content: { type: "string" as const, description: "The highlighted passage" },
+                    chapter: { type: "string" as const, description: "Chapter or section heading if determinable" },
+                    note: { type: "string" as const, description: "Personal note attached to this highlight" },
+                  },
+                  required: ["content"],
+                },
+              },
+            },
+            required: ["highlights"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool" as const, name: "extract_highlights" },
+      messages: [{ role: "user", content: data.text }],
+    });
+
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") return [] as ParsedHighlight[];
+
+    const parsed = toolUse.input as { highlights: ParsedHighlight[] };
+    return (parsed.highlights ?? []) as ParsedHighlight[];
+  });
+
+// ─── Bulk-create highlights (batch embed + insert) ────────────────────────────
+
+export const bulkCreateHighlights = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        sourceId: z.string().uuid(),
+        highlights: z
+          .array(
+            z.object({
+              content: z.string().min(1).max(4000),
+              chapter: z.string().optional(),
+              note: z.string().max(2000).optional(),
+            }),
+          )
+          .min(1)
+          .max(500),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+
+    const { data: maxRow } = await supabase
+      .from("chunks")
+      .select("chunk_index")
+      .eq("source_id", data.sourceId)
+      .order("chunk_index", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const baseIndex = (maxRow?.chunk_index ?? -1) + 1;
+
+    const texts = data.highlights.map((h) =>
+      h.note ? `${h.content}\n\n${h.note}` : h.content,
+    );
+    const embeddings = await embedBatch(texts).catch(() => texts.map(() => null));
+
+    const { data: chunks, error: chunksErr } = await supabase
+      .from("chunks")
+      .insert(
+        data.highlights.map((h, i) => ({
+          source_id: data.sourceId,
+          user_id: userId,
+          chunk_index: baseIndex + i,
+          content: texts[i],
+          chapter_title: h.chapter ?? null,
+          chunk_type: "highlight",
+          embedding: embeddings[i] ? JSON.stringify(embeddings[i]) : null,
+          indexed_at: new Date().toISOString(),
+          token_count: Math.ceil(texts[i].length / 4),
+        })),
+      )
+      .select("id");
+
+    if (chunksErr || !chunks) throw new Error(chunksErr?.message ?? "Failed to create chunks");
+
+    const { error: highlightsErr } = await supabase
+      .from("highlights")
+      .insert(
+        data.highlights.map((h, i) => ({
+          user_id: userId,
+          source_id: data.sourceId,
+          chunk_id: chunks[i]?.id ?? null,
+          content: h.content,
+          note: h.note ?? null,
+          chapter: h.chapter ?? null,
+          page: null,
+        })),
+      );
+
+    if (highlightsErr) throw new Error(highlightsErr.message);
+
+    await supabase
+      .from("sources")
+      .update({ total_chunks: baseIndex + data.highlights.length })
+      .eq("id", data.sourceId)
+      .eq("user_id", userId);
+
+    return { count: data.highlights.length };
   });
