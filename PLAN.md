@@ -99,44 +99,29 @@ Never start a phase until the previous one is fully working in production.
 
 ---
 
-## Phase 4 — Book Ingestion (Digital)
+## Phase 4 — Book Ingestion (Digital) ✓
 *Goal: user can upload a PDF or ePub and have it fully indexed; or scan a Kindle library screenshot to bulk-add ebooks.*
 
-- [ ] PDF upload → `pdfjs-dist` (client-side) → chunk by paragraph
-- [ ] ePub upload → JSZip parse (client-side) → chunk by section
-- [ ] Scanned PDF detection → fall back to physical book flow
-- [ ] Deduplication check (ISBN / title+author match before re-ingesting)
-- [ ] Import page: mode selector (Physical / Digital / Kindle) + drag-and-drop + progress
-- [ ] Kindle library screenshot import: upload 1+ screenshots → Haiku vision extracts book list → user reviews → bulk ingest via Google Books + AI chapter summaries
+- [x] PDF upload → `pdfjs-dist` (client-side) → chunk by paragraph
+- [x] ePub upload → JSZip parse (client-side) → chunk by section
+- [x] Scanned PDF detection → fall back to physical book flow
+- [x] Deduplication check (ISBN / title+author match before re-ingesting)
+- [x] Import page: mode selector (Physical / Digital / Kindle / Highlights / Web) + drag-and-drop + progress
+- [x] Kindle library screenshot import: upload 1+ screenshots → Haiku vision extracts book list → user reviews → bulk ingest via Google Books + AI chapter summaries
+- [x] Library source type filter pills: Books / eBooks / Web / Substack / GitHub (only shows tabs for types that exist)
 - [ ] Verify: uploaded PDF chunks retrievable with correct page numbers
 
 ---
 
-## Phase 5 — Highlights
+## Phase 5 — Highlights ✓
 *Goal: user can add personal highlights to any source.*
 
-- [ ] Highlight input UI (book detail page + floating highlight button)
-- [ ] `createHighlight` server function → inserts into `highlights`, creates chunk
-- [ ] Highlight chunk embedded immediately (not via Workflow — fast path)
+- [x] Highlight input UI (book detail page + floating highlight button)
+- [x] `createHighlight` server function → inserts into `highlights`, creates chunk
+- [x] Highlight chunk embedded immediately (not via Workflow — fast path)
+- [x] `deleteHighlight` server function — removes highlight + associated chunk
+- [x] Kindle highlights import: paste Kindle Notebook text → `parseKindleHighlights` (Haiku) → review → `bulkCreateHighlights` (batch embed + insert)
 - [ ] Verify: highlight outranks AI chapter summary in `match_chunks` (authority_tier = 1)
-
-### Highlight import paths (for future sprints)
-Manual entry (paste a quote) is the Phase 5 baseline. These richer import paths should be added once manual highlights are working:
-
-**Kindle — `My Clippings.txt` (recommended first)**
-- Connect Kindle via USB → parse the plain-text `My Clippings.txt` file on the device
-- Format is well-documented and consistent; an afternoon of work to build a parser
-- Matches highlights to existing sources by title/author, creates highlight records in bulk
-- No third-party dependency, works offline
-
-**Readwise API (most powerful)**
-- Readwise aggregates Kindle, iBooks, Instapaper, Pocket, and more into one API
-- If user already uses Readwise, one integration covers all sources at once
-- Requires a Readwise account and API key
-- Best long-term option if the user is already in the Readwise ecosystem
-
-**`read.amazon.com` scraping (avoid)**
-- Amazon's website shows Kindle highlights but scraping is fragile and against ToS
 
 ---
 
@@ -188,17 +173,29 @@ Manual entry (paste a quote) is the Phase 5 baseline. These richer import paths 
 
 ---
 
-## Phase 9 — Daily Digest (Granola Integration)
-*Goal: user receives a morning email connecting yesterday's meetings to their library.*
+## Phase 9 — Daily Digest (TOPICS.md pipeline) ✓
+*Goal: user receives a morning email connecting their daily topics to their library.*
 
-- [ ] `DigestAgent` scheduled task (06:00 user local time)
-- [ ] Granola MCP integration (`src/lib/granola.ts`)
-- [ ] `extract_meeting_themes` tool (Haiku — fully anonymised)
-- [ ] Parallel RAG search per theme
-- [ ] Digest synthesis (Opus) → Lumen voice
-- [ ] Cloudflare Email sending (`src/lib/email.ts`)
-- [ ] `digest_runs` + `digest_themes` stored after each run
-- [ ] Digest settings UI: enable/disable, time, email address
+**Architecture note:** Direct Granola MCP integration replaced by a TOPICS.md-based pipeline.
+A ClaudeCowork routine (runs at 18h local) analyses Granola meetings + Slack activity and writes
+`TOPICS.md` in Obsidian. A local script (`sync/push-topics.ts`) syncs the file to Supabase.
+The Cloudflare cron reads topics from Supabase and runs RAG — no Granola API needed server-side.
+
+- [x] Cron scheduled task (07:00 UTC = 09:00 Paris) via Cloudflare Workers `scheduled` handler
+- [x] `parseTopicsFromMd` — extracts RAG search queries ("Question à explorer") from TOPICS.md
+- [x] `parseTopicTitlesFromMd` — extracts short display titles (shown as section headers)
+- [x] Parallel RAG search per topic (`match_chunks`, min similarity 0.50)
+- [x] Digest synthesis per topic (Opus, 1024 tokens) → Lumen voice
+- [x] Citations with URL: 🔗 clickable links for web sources, 📚 for books
+- [x] Cloudflare Email sending (`src/lib/email.ts`)
+- [x] `digest_runs` + `digest_themes` stored after each run
+- [x] Digest settings UI: enable/disable, delivery email, delivery time
+- [x] Topics panel: shows synced topics as chips + last sync date
+- [x] Test panel: "My topics" (reads from TOPICS.md in Supabase) + "Sample themes" fallback
+- [x] `sync/push-topics.ts` — local CLI to sync TOPICS.md → Supabase
+- [x] `sync/routine.template.md` — anonymised ClaudeCowork routine template (public)
+- [x] macOS LaunchAgent (`com.libris.sync`) — auto-sync on login + Mac wake at 23:00
+- [ ] Digest history UI: last 7 digests readable in-app
 - [ ] Digest history UI: last 7 digests readable in-app
 - [ ] Verify: no transcript content appears in DB (only anonymised themes)
 - [ ] Verify: digest email matches format in GRANOLA.md

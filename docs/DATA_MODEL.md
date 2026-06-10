@@ -54,6 +54,8 @@ create table public.user_profiles (
   digest_enabled       boolean     not null default true,
   digest_email         text,
   semantic_cache_threshold float   not null default 0.92, -- lower = more cache hits
+  topics_md            text,       -- raw TOPICS.md content synced via sync/push-topics.ts
+  topics_updated_at    timestamptz,-- when topics_md was last pushed
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
