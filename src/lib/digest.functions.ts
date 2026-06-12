@@ -335,6 +335,7 @@ export const runDigest = createServerFn({ method: "POST" })
       const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections);
       const result = await sendEmail({ to: digestEmail, subject, html, text });
       emailSent = result.sent;
+      if (!result.sent && result.error) console.error(`[digest] email failed: ${result.error}`);
 
       await supabase
         .from("digest_runs")
