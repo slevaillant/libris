@@ -44,49 +44,83 @@ export function formatTimestamp(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// Try clients in order: TVHTML5 bypasses bot detection best from server environments
+type CaptionTrack = { baseUrl?: string; languageCode?: string; kind?: string };
+
+// Fetch the watch page HTML and extract caption track URLs + description.
+// This is the most reliable method from datacenter IPs because YouTube
+// blocks the player API (UNPLAYABLE/LOGIN_REQUIRED) but serves the page normally.
+async function extractTracksFromPage(
+  videoId: string,
+): Promise<{ tracks: CaptionTrack[]; description: string } | null> {
+  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    headers: {
+      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  }).catch(() => null);
+
+  if (!res?.ok) return null;
+  const html = await res.text();
+
+  // Extract captionTracks JSON array using a string-aware bracket counter
+  let tracks: CaptionTrack[] = [];
+  const ctIdx = html.indexOf('"captionTracks":');
+  if (ctIdx !== -1) {
+    const arrStart = html.indexOf("[", ctIdx);
+    if (arrStart !== -1) {
+      let depth = 0;
+      let inStr = false;
+      let escape = false;
+      let i = arrStart;
+      for (; i < html.length; i++) {
+        const ch = html[i];
+        if (escape) { escape = false; continue; }
+        if (ch === "\\" && inStr) { escape = true; continue; }
+        if (ch === '"') { inStr = !inStr; continue; }
+        if (!inStr) {
+          if (ch === "[" || ch === "{") depth++;
+          else if (ch === "]" || ch === "}") { depth--; if (depth === 0) { i++; break; } }
+        }
+      }
+      try {
+        tracks = JSON.parse(html.slice(arrStart, i)) as CaptionTrack[];
+      } catch {}
+    }
+  }
+
+  // og:description is always present and contains the real video description
+  const descMatch =
+    html.match(/property="og:description" content="([^"]*)"/) ??
+    html.match(/content="([^"]*)" property="og:description"/);
+  const description = descMatch ? decodeHtml(descMatch[1]) : "";
+
+  return { tracks, description };
+}
+
+// Player API fallback — returns tracks when called from non-datacenter IPs
 const YT_CLIENTS = [
   {
     clientName: "7",
     clientVersion: "7.20231009.16.00",
-    context: {
-      client: { clientName: "TVHTML5", clientVersion: "7.20231009.16.00", hl: "en", gl: "US" },
-    },
+    context: { client: { clientName: "TVHTML5", clientVersion: "7.20231009.16.00", hl: "en", gl: "US" } },
   },
   {
     clientName: "1",
     clientVersion: "2.20240101.00.00",
-    context: {
-      client: { clientName: "WEB", clientVersion: "2.20240101.00.00", hl: "en", gl: "US" },
-    },
-  },
-  {
-    clientName: "3",
-    clientVersion: "19.09.37",
-    context: {
-      client: {
-        clientName: "ANDROID",
-        clientVersion: "19.09.37",
-        androidSdkVersion: 30,
-        hl: "en",
-        gl: "US",
-      },
-    },
+    context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00", hl: "en", gl: "US" } },
   },
 ];
 
 type PlayerResponse = {
   videoDetails?: { title?: string; author?: string; shortDescription?: string };
   captions?: {
-    playerCaptionsTracklistRenderer?: {
-      captionTracks?: { baseUrl?: string; languageCode?: string; kind?: string }[];
-    };
+    playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] };
   };
 };
 
-async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse> {
-  let firstSuccessful: PlayerResponse | null = null;
-
+async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse | null> {
   for (const client of YT_CLIENTS) {
     try {
       const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
@@ -97,30 +131,22 @@ async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse> {
           "X-YouTube-Client-Version": client.clientVersion,
           "Origin": "https://www.youtube.com",
           "Referer": `https://www.youtube.com/watch?v=${videoId}`,
-          "User-Agent": "Mozilla/5.0 (compatible)",
         },
         body: JSON.stringify({ context: client.context, videoId }),
       });
-
       if (!res.ok) continue;
-
       const data = (await res.json()) as PlayerResponse;
-      const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-
-      if (tracks.length > 0) return data;
-      if (!firstSuccessful) firstSuccessful = data;
+      if ((data.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? []).length > 0) return data;
     } catch {}
   }
-
-  if (firstSuccessful) return firstSuccessful;
-  throw new Error("YouTube player API unavailable — all client contexts failed");
+  return null;
 }
 
 export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
   const videoId = extractVideoId(url);
   if (!videoId) throw new Error("Invalid YouTube URL — cannot extract video ID");
 
-  // oEmbed: reliable title + author, no auth or cookies needed
+  // oEmbed: most reliable source for title + channel name
   let oembedTitle: string | null = null;
   let oembedAuthor: string | null = null;
   const oembedRes = await fetch(
@@ -132,14 +158,29 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
     oembedAuthor = oembed.author_name ?? null;
   }
 
-  const player = await fetchPlayerResponse(videoId);
+  // Fetch caption tracks: try watch page first (works from datacenter IPs),
+  // fall back to player API (works from residential/dev IPs).
+  let tracks: CaptionTrack[] = [];
+  let description = "";
 
-  const title = oembedTitle ?? player.videoDetails?.title ?? `YouTube video ${videoId}`;
-  const author = oembedAuthor ?? player.videoDetails?.author ?? null;
-  const description = (player.videoDetails?.shortDescription ?? "").slice(0, 500);
+  const pageData = await extractTracksFromPage(videoId).catch(() => null);
+  if (pageData) {
+    tracks = pageData.tracks;
+    description = pageData.description.slice(0, 500);
+  }
+
+  if (tracks.length === 0) {
+    const player = await fetchPlayerResponse(videoId);
+    if (player) {
+      tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+      if (!description) description = (player.videoDetails?.shortDescription ?? "").slice(0, 500);
+    }
+  }
+
+  const title = oembedTitle ?? `YouTube video ${videoId}`;
+  const author = oembedAuthor;
 
   // Prefer manual English track, then auto-generated, then any language
-  const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
   const track =
     tracks.find((t) => t.languageCode === "en" && t.kind !== "asr") ??
     tracks.find((t) => t.languageCode === "en") ??
@@ -154,14 +195,11 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
       const xmlRes = await fetch(track.baseUrl);
       if (xmlRes.ok) {
         const xml = await xmlRes.text();
-
-        // Parse segments preserving start timestamps
         const segments: YouTubeTimedSegment[] = [];
         for (const m of xml.matchAll(/<text[^>]+start="([^"]+)"[^>]*>([\s\S]*?)<\/text>/g)) {
           const text = decodeHtml(m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
           if (text) segments.push({ startSeconds: parseFloat(m[1]), text });
         }
-
         if (segments.length > 0) {
           timedSegments = segments;
           transcript = segments.map((s) => s.text).join(" ");
@@ -206,11 +244,9 @@ export function chunkTranscript(transcript: string): string[] {
   const words = transcript.split(/\s+/).filter(Boolean);
   const WORDS_PER_CHUNK = 300;
   const chunks: string[] = [];
-
   for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
     const chunk = words.slice(i, i + WORDS_PER_CHUNK).join(" ");
     if (chunk.trim().length > 50) chunks.push(chunk);
   }
-
   return chunks;
 }
