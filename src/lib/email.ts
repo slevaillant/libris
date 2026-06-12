@@ -105,6 +105,30 @@ export function buildDigestEmail(
     )
     .join("");
 
+  // Deduplicated sources footer — keyed by URL (falling back to title)
+  const allCitations = sections.flatMap((s) => s.citations);
+  const seen = new Set<string>();
+  const uniqueSources = allCitations.filter((c) => {
+    const key = c.url ?? c.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const sourcesHtml = uniqueSources.length > 0
+    ? `<div style="border-top:1px solid #e5e7eb;margin-top:32px;padding-top:20px;">
+        <p style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 12px;">Sources cited</p>
+        ${uniqueSources.map((c) => `
+          <p style="font-size:12px;color:#374151;margin:6px 0;">
+            ${c.url ? "🔗" : "📚"}
+            ${c.url
+              ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
+              : `<strong>${c.title}</strong>`
+            }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}
+          </p>`).join("")}
+      </div>`
+    : "";
+
   const html = `
   <!DOCTYPE html>
   <html>
@@ -118,6 +142,7 @@ export function buildDigestEmail(
         ? `<p style="font-size:13px;color:#6b7280;">Nothing matched your library today. Consider adding more sources on the topics you discussed.</p>`
         : ""
     }
+    ${sourcesHtml}
     <div style="border-top:1px solid #e5e7eb;margin-top:32px;padding-top:16px;">
       <p style="font-size:11px;color:#9ca3af;margin:0;">Libris · Your personal knowledge library</p>
     </div>

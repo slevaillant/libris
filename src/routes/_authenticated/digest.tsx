@@ -99,25 +99,28 @@ function DigestSettings() {
   return (
     <div className="space-y-4">
       {/* Enable toggle */}
-      <div className="flex items-center justify-between rounded-lg border border-border p-3.5">
+      <div className={cn(
+        "flex items-center justify-between rounded-lg border p-3.5 transition-colors",
+        enabled ? "border-emerald-500/40 bg-emerald-500/10" : "border-border bg-muted/30",
+      )}>
         <div>
           <p className="text-xs font-medium">Daily digest</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            Morning email connecting your meetings to your library
+          <p className="text-[10px] mt-0.5 text-muted-foreground">
+            {enabled ? "Email sent every morning at 9h" : "No email will be sent"}
           </p>
         </div>
         <button
           type="button"
           onClick={() => setEnabled((v) => !v)}
           className={cn(
-            "relative h-5 w-9 rounded-full transition-colors cursor-pointer select-none",
-            enabled ? "bg-primary" : "bg-muted-foreground/30",
+            "relative h-7 w-12 rounded-full transition-all duration-200 cursor-pointer select-none shrink-0",
+            enabled ? "bg-emerald-500" : "bg-muted-foreground/25",
           )}
         >
           <span
             className={cn(
-              "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
-              enabled ? "translate-x-4" : "translate-x-0.5",
+              "absolute top-1 h-5 w-5 rounded-full shadow-md transition-transform duration-200",
+              enabled ? "translate-x-[22px] bg-white" : "translate-x-1 bg-white/80",
             )}
           />
         </button>
@@ -208,7 +211,7 @@ type TestSection = { theme: string; synthesis: string; citations: { title: strin
 function TestRunPanel({ onRanTest }: { onRanTest: () => void }) {
   const triggerFn = useServerFn(triggerTestDigest);
   const runFn = useServerFn(runDigest);
-  const [running, setRunning] = useState<"sample" | "topics" | null>(null);
+  const [running, setRunning] = useState<"sample" | "topics" | "email" | null>(null);
   const [result, setResult] = useState<{ sectionsCount: number; citationCount: number; sections: TestSection[]; source: "sample" | "topics" } | null>(null);
 
   const handleSample = async () => {
@@ -226,14 +229,18 @@ function TestRunPanel({ onRanTest }: { onRanTest: () => void }) {
     }
   };
 
-  const handleTopics = async () => {
-    setRunning("topics");
+  const handleTopics = async (sendEmail = false) => {
+    setRunning(sendEmail ? "email" : "topics");
     setResult(null);
     try {
-      const res = await runFn({ data: { sendEmail: false } });
+      const res = await runFn({ data: { sendEmail } });
       setResult({ sectionsCount: res.sectionsCount, citationCount: res.citationCount, sections: res.sections, source: "topics" });
       onRanTest();
-      toast.success(`Digest from your topics — ${res.sectionsCount} sections, ${res.citationCount} citations`);
+      if (sendEmail) {
+        toast.success(res.emailSent ? "Email sent to your inbox!" : "Digest ran but email failed — check RESEND_API_KEY");
+      } else {
+        toast.success(`Digest from your topics — ${res.sectionsCount} sections, ${res.citationCount} citations`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No topics synced yet — run npx tsx sync/push-topics.ts first");
     } finally {
@@ -248,19 +255,22 @@ function TestRunPanel({ onRanTest }: { onRanTest: () => void }) {
       <div className="space-y-2">
         <p className="text-xs font-medium">Test run</p>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={handleTopics} disabled={busy} className="flex-1">
+          <Button size="sm" variant="outline" onClick={() => handleTopics(false)} disabled={busy} className="flex-1">
             {running === "topics" ? (
               <><Loader2 className="h-3 w-3 animate-spin" /> Running…</>
             ) : (
-              <><Play className="h-3 w-3" /> My topics</>
+              <><Play className="h-3 w-3" /> Preview</>
             )}
           </Button>
-          <Button size="sm" variant="ghost" onClick={handleSample} disabled={busy} className="flex-1 text-muted-foreground">
-            {running === "sample" ? (
-              <><Loader2 className="h-3 w-3 animate-spin" /> Running…</>
+          <Button size="sm" onClick={() => handleTopics(true)} disabled={busy} className="flex-1">
+            {running === "email" ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Sending…</>
             ) : (
-              "Sample themes"
+              <>Send email now</>
             )}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleSample} disabled={busy} className="shrink-0 text-muted-foreground">
+            {running === "sample" ? <Loader2 className="h-3 w-3 animate-spin" /> : "Sample"}
           </Button>
         </div>
         {result && (
@@ -270,35 +280,48 @@ function TestRunPanel({ onRanTest }: { onRanTest: () => void }) {
         )}
       </div>
 
-      {result && (
-        <div className="space-y-6 pt-2">
-          {result.sections.map((s, i) => (
-            <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                {s.theme}
-              </p>
-              <p className="text-sm leading-relaxed">{s.synthesis}</p>
-              {s.citations.length > 0 && (
-                <div className="border-t border-border pt-3 space-y-2">
-                  {s.citations.map((c, j) => (
-                    <p key={j} className="text-xs text-muted-foreground flex items-start gap-1.5">
-                      <span className="shrink-0 mt-px">{c.url ? "🔗" : "📚"}</span>
-                      <span>
-                        {c.url
-                          ? <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:opacity-80">{c.title}</a>
-                          : <span className="font-medium">{c.title}</span>
-                        }
-                        {c.author ? <span className="text-muted-foreground/70"> — {c.author}</span> : ""}
-                        {c.chapterTitle ? <span className="text-muted-foreground/60 block ml-0">{c.chapterTitle}</span> : ""}
-                      </span>
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {result && (() => {
+        const allCitations = result.sections.flatMap((s) => s.citations);
+        const seen = new Set<string>();
+        const uniqueSources = allCitations.filter((c) => {
+          const key = c.url ?? c.title;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        return (
+          <div className="space-y-6 pt-2">
+            {result.sections.map((s, i) => (
+              <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  {s.theme}
+                </p>
+                <p className="text-sm leading-relaxed">{s.synthesis}</p>
+              </div>
+            ))}
+
+            {uniqueSources.length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                  Sources cited
+                </p>
+                {uniqueSources.map((c, i) => (
+                  <p key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                    <span className="shrink-0 mt-px">{c.url ? "🔗" : "📚"}</span>
+                    <span>
+                      {c.url
+                        ? <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:opacity-80">{c.title}</a>
+                        : <span className="font-medium">{c.title}</span>
+                      }
+                      {c.author ? <span className="text-muted-foreground/70"> — {c.author}</span> : ""}
+                    </span>
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
