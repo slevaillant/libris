@@ -113,14 +113,14 @@ function DigestSettings() {
           type="button"
           onClick={() => setEnabled((v) => !v)}
           className={cn(
-            "relative h-7 w-12 rounded-full transition-all duration-200 cursor-pointer select-none shrink-0",
+            "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out",
             enabled ? "bg-emerald-500" : "bg-muted-foreground/25",
           )}
         >
           <span
             className={cn(
-              "absolute top-1 h-5 w-5 rounded-full shadow-md transition-transform duration-200",
-              enabled ? "translate-x-[22px] bg-white" : "translate-x-1 bg-white/80",
+              "pointer-events-none inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out",
+              enabled ? "translate-x-5" : "translate-x-0.5",
             )}
           />
         </button>
