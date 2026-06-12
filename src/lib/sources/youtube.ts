@@ -44,76 +44,14 @@ export function formatTimestamp(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// The ANDROID client with the YouTube Android app User-Agent bypasses both:
+//  - UNPLAYABLE/LOGIN_REQUIRED responses from the player API on datacenter IPs
+//  - EU GDPR consent gates (which only apply to web browser contexts)
+// The timedtext URLs returned by this client are accessible from any IP.
+const ANDROID_CLIENT_VERSION = "20.10.38";
+const ANDROID_UA = `com.google.android.youtube/${ANDROID_CLIENT_VERSION} (Linux; U; Android 14)`;
+
 type CaptionTrack = { baseUrl?: string; languageCode?: string; kind?: string };
-
-// Fetch the watch page HTML and extract caption track URLs + description.
-// This is the most reliable method from datacenter IPs because YouTube
-// blocks the player API (UNPLAYABLE/LOGIN_REQUIRED) but serves the page normally.
-async function extractTracksFromPage(
-  videoId: string,
-): Promise<{ tracks: CaptionTrack[]; description: string } | null> {
-  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: {
-      "Accept-Language": "en-US,en;q=0.9",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      // Bypass YouTube's GDPR consent prompt served to EU datacenter IPs
-      "Cookie": "CONSENT=YES+1; PREF=f1=50000000&f6=8&hl=en",
-    },
-  }).catch(() => null);
-
-  if (!res?.ok) return null;
-  const html = await res.text();
-
-  // Extract captionTracks JSON array using a string-aware bracket counter
-  let tracks: CaptionTrack[] = [];
-  const ctIdx = html.indexOf('"captionTracks":');
-  if (ctIdx !== -1) {
-    const arrStart = html.indexOf("[", ctIdx);
-    if (arrStart !== -1) {
-      let depth = 0;
-      let inStr = false;
-      let escape = false;
-      let i = arrStart;
-      for (; i < html.length; i++) {
-        const ch = html[i];
-        if (escape) { escape = false; continue; }
-        if (ch === "\\" && inStr) { escape = true; continue; }
-        if (ch === '"') { inStr = !inStr; continue; }
-        if (!inStr) {
-          if (ch === "[" || ch === "{") depth++;
-          else if (ch === "]" || ch === "}") { depth--; if (depth === 0) { i++; break; } }
-        }
-      }
-      try {
-        tracks = JSON.parse(html.slice(arrStart, i)) as CaptionTrack[];
-      } catch {}
-    }
-  }
-
-  // og:description is always present and contains the real video description
-  const descMatch =
-    html.match(/property="og:description" content="([^"]*)"/) ??
-    html.match(/content="([^"]*)" property="og:description"/);
-  const description = descMatch ? decodeHtml(descMatch[1]) : "";
-
-  return { tracks, description };
-}
-
-// Player API fallback — returns tracks when called from non-datacenter IPs
-const YT_CLIENTS = [
-  {
-    clientName: "7",
-    clientVersion: "7.20231009.16.00",
-    context: { client: { clientName: "TVHTML5", clientVersion: "7.20231009.16.00", hl: "en", gl: "US" } },
-  },
-  {
-    clientName: "1",
-    clientVersion: "2.20240101.00.00",
-    context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00", hl: "en", gl: "US" } },
-  },
-];
 
 type PlayerResponse = {
   videoDetails?: { title?: string; author?: string; shortDescription?: string };
@@ -123,32 +61,49 @@ type PlayerResponse = {
 };
 
 async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse | null> {
-  for (const client of YT_CLIENTS) {
-    try {
-      const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-YouTube-Client-Name": client.clientName,
-          "X-YouTube-Client-Version": client.clientVersion,
-          "Origin": "https://www.youtube.com",
-          "Referer": `https://www.youtube.com/watch?v=${videoId}`,
-        },
-        body: JSON.stringify({ context: client.context, videoId }),
-      });
-      if (!res.ok) continue;
-      const data = (await res.json()) as PlayerResponse;
-      if ((data.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? []).length > 0) return data;
-    } catch {}
+  try {
+    const res = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": ANDROID_UA,
+      },
+      body: JSON.stringify({
+        context: { client: { clientName: "ANDROID", clientVersion: ANDROID_CLIENT_VERSION } },
+        videoId,
+      }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as PlayerResponse;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+// Parse YouTube's timedtext format 3 XML: <p t="ms"> paragraphs with nested <s> words.
+function parseTimedtextXml(xml: string): YouTubeTimedSegment[] {
+  const segments: YouTubeTimedSegment[] = [];
+  for (const m of xml.matchAll(/<p t="(\d+)"[^>]*>([\s\S]*?)<\/p>/g)) {
+    const text = decodeHtml(
+      m[2].replace(/<s[^>]*>/g, "").replace(/<\/s>/g, "").replace(/\s+/g, " ").trim(),
+    );
+    if (text) segments.push({ startSeconds: parseInt(m[1]) / 1000, text });
+  }
+  // Fallback: old-style <text start="s"> format
+  if (segments.length === 0) {
+    for (const m of xml.matchAll(/<text[^>]+start="([^"]+)"[^>]*>([\s\S]*?)<\/text>/g)) {
+      const text = decodeHtml(m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+      if (text) segments.push({ startSeconds: parseFloat(m[1]), text });
+    }
+  }
+  return segments;
 }
 
 export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
   const videoId = extractVideoId(url);
   if (!videoId) throw new Error("Invalid YouTube URL — cannot extract video ID");
 
-  // oEmbed: most reliable source for title + channel name
+  // oEmbed: most reliable source for title + channel name, works from any IP
   let oembedTitle: string | null = null;
   let oembedAuthor: string | null = null;
   const oembedRes = await fetch(
@@ -160,29 +115,13 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
     oembedAuthor = oembed.author_name ?? null;
   }
 
-  // Fetch caption tracks: try watch page first (works from datacenter IPs),
-  // fall back to player API (works from residential/dev IPs).
-  let tracks: CaptionTrack[] = [];
-  let description = "";
+  const player = await fetchPlayerResponse(videoId);
 
-  const pageData = await extractTracksFromPage(videoId).catch(() => null);
-  if (pageData) {
-    tracks = pageData.tracks;
-    description = pageData.description.slice(0, 500);
-  }
+  const title = oembedTitle ?? player?.videoDetails?.title ?? `YouTube video ${videoId}`;
+  const author = oembedAuthor ?? player?.videoDetails?.author ?? null;
+  const description = (player?.videoDetails?.shortDescription ?? "").slice(0, 500);
 
-  if (tracks.length === 0) {
-    const player = await fetchPlayerResponse(videoId);
-    if (player) {
-      tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-      if (!description) description = (player.videoDetails?.shortDescription ?? "").slice(0, 500);
-    }
-  }
-
-  const title = oembedTitle ?? `YouTube video ${videoId}`;
-  const author = oembedAuthor;
-
-  // Prefer manual English track, then auto-generated, then any language
+  const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
   const track =
     tracks.find((t) => t.languageCode === "en" && t.kind !== "asr") ??
     tracks.find((t) => t.languageCode === "en") ??
@@ -197,11 +136,7 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
       const xmlRes = await fetch(track.baseUrl);
       if (xmlRes.ok) {
         const xml = await xmlRes.text();
-        const segments: YouTubeTimedSegment[] = [];
-        for (const m of xml.matchAll(/<text[^>]+start="([^"]+)"[^>]*>([\s\S]*?)<\/text>/g)) {
-          const text = decodeHtml(m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
-          if (text) segments.push({ startSeconds: parseFloat(m[1]), text });
-        }
+        const segments = parseTimedtextXml(xml);
         if (segments.length > 0) {
           timedSegments = segments;
           transcript = segments.map((s) => s.text).join(" ");
@@ -213,7 +148,7 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
   return { title, author, url, videoId, description, transcript, transcriptAvailable, timedSegments };
 }
 
-// Chunk transcript into ~2-min timed segments (300 words each), prefixed with [MM:SS]
+// Chunk transcript into ~5-min timed segments (300 words each), prefixed with [MM:SS]
 export function chunkTranscriptWithTimestamps(
   segments: YouTubeTimedSegment[],
   wordsPerChunk = 300,
