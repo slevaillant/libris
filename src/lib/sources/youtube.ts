@@ -54,6 +54,7 @@ const ANDROID_UA = `com.google.android.youtube/${ANDROID_CLIENT_VERSION} (Linux;
 type CaptionTrack = { baseUrl?: string; languageCode?: string; kind?: string };
 
 type PlayerResponse = {
+  playabilityStatus?: { status?: string };
   videoDetails?: { title?: string; author?: string; shortDescription?: string };
   captions?: {
     playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] };
@@ -61,22 +62,58 @@ type PlayerResponse = {
 };
 
 async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse | null> {
+  // YouTube blocks unauthenticated requests from datacenter IPs (LOGIN_REQUIRED).
+  // YOUTUBE_COOKIES (Wrangler secret) contains the user's YouTube session cookies
+  // which authenticate the request and bypass the datacenter IP block.
+  const cookies = (process.env.YOUTUBE_COOKIES ?? "").trim();
+
+  // Build Authorization header using SAPISID hash — required by YouTube's API
+  // when making authenticated requests (SAPISIDHASH proves the cookies are valid)
+  async function sapisidAuth(): Promise<string | null> {
+    const sapisid =
+      cookies.match(/(?:^|;\s*)__Secure-3PAPISID=([^;]+)/)?.[1] ??
+      cookies.match(/(?:^|;\s*)SAPISID=([^;]+)/)?.[1];
+    if (!sapisid) return null;
+    const ts = Math.floor(Date.now() / 1000);
+    const msg = `${ts} ${sapisid} https://www.youtube.com`;
+    const hash = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(msg));
+    const hex = Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `SAPISIDHASH ${ts}_${hex}`;
+  }
+
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "User-Agent": ANDROID_UA,
+      "Origin": "https://www.youtube.com",
+      "X-Origin": "https://www.youtube.com",
+      "X-Goog-AuthUser": "0",
+    };
+    if (cookies) {
+      headers["Cookie"] = cookies;
+      const auth = await sapisidAuth();
+      if (auth) headers["Authorization"] = auth;
+      console.log(`[yt] cookies=${cookies.length} auth=${auth ? "yes" : "no"}`);
+    }
+
     const res = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": ANDROID_UA,
-      },
+      headers,
       body: JSON.stringify({
         context: { client: { clientName: "ANDROID", clientVersion: ANDROID_CLIENT_VERSION } },
         videoId,
       }),
     });
     if (!res.ok) return null;
-    return (await res.json()) as PlayerResponse;
-  } catch {
-    return null;
+    const data = (await res.json()) as PlayerResponse;
+    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+    console.log(`[yt] playability=${data.playabilityStatus?.status} tracks=${tracks.length}`);
+    if (data.playabilityStatus?.status === "LOGIN_REQUIRED" && !cookies) {
+      throw new Error("YOUTUBE_COOKIES secret not set — required for server-side YouTube access");
+    }
+    return data;
+  } catch (e) {
+    throw e;
   }
 }
 
@@ -119,7 +156,9 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
 
   const title = oembedTitle ?? player?.videoDetails?.title ?? `YouTube video ${videoId}`;
   const author = oembedAuthor ?? player?.videoDetails?.author ?? null;
-  const description = (player?.videoDetails?.shortDescription ?? "").slice(0, 500);
+  // Use player description if available, otherwise fall back to title so the video
+  // can always be indexed even when the player API is blocked (datacenter IPs).
+  const description = ((player?.videoDetails?.shortDescription ?? "").trim() || title).slice(0, 500);
 
   const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
   const track =
