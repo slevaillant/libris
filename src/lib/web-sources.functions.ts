@@ -357,8 +357,18 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
       .maybeSingle();
     if (existing) throw new Error("This video is already in your library");
 
-    const { fetchYouTubeVideo, chunkTranscriptWithTimestamps } = await import("@/lib/sources/youtube");
+    const { fetchYouTubeVideo, chunkTranscriptWithTimestamps, fetchTranscriptViaGemini } = await import("@/lib/sources/youtube");
     const video = await fetchYouTubeVideo(data.url);
+
+    // If the player API was blocked (datacenter IP), use Gemini as fallback.
+    // This runs only during ingest, not during preview, to avoid 60s preview hangs.
+    if (!video.timedSegments) {
+      const geminiSegments = await fetchTranscriptViaGemini(video.videoId).catch(() => null);
+      if (geminiSegments) {
+        video.timedSegments = geminiSegments;
+        video.transcript = geminiSegments.map((s) => s.text).join(" ");
+      }
+    }
 
     const content = video.transcript ?? video.description;
     if (!content || content.length < 50) {

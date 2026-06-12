@@ -120,7 +120,7 @@ async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse | nu
 // Gemini fallback: process the YouTube video directly via the Gemini API.
 // Used when the ANDROID player API returns LOGIN_REQUIRED (Cloudflare datacenter IPs).
 // Gemini accepts YouTube URLs as fileData and generates a timestamped transcript.
-async function fetchTranscriptViaGemini(videoId: string): Promise<YouTubeTimedSegment[] | null> {
+export async function fetchTranscriptViaGemini(videoId: string): Promise<YouTubeTimedSegment[] | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
 
@@ -149,7 +149,8 @@ async function fetchTranscriptViaGemini(videoId: string): Promise<YouTubeTimedSe
   ).catch(() => null);
 
   if (!res?.ok) return null;
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } };
+  if (data.error) return null;
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   if (!text) return null;
 
@@ -228,14 +229,7 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
     } catch {}
   }
 
-  // Fallback: when the player API is blocked (datacenter IPs), use Gemini to generate
-  // a timestamped transcript directly from the YouTube URL.
-  if (!timedSegments) {
-    timedSegments = await fetchTranscriptViaGemini(videoId).catch(() => null);
-    if (timedSegments) transcript = timedSegments.map((s) => s.text).join(" ");
-  }
-
-  return { title, author, url, videoId, description, transcript, transcriptAvailable: transcriptAvailable || !!timedSegments, timedSegments };
+  return { title, author, url, videoId, description, transcript, transcriptAvailable, timedSegments };
 }
 
 // Chunk transcript into ~5-min timed segments (300 words each), prefixed with [MM:SS]
