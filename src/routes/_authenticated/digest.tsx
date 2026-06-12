@@ -106,21 +106,21 @@ function DigestSettings() {
         <div>
           <p className="text-xs font-medium">Daily digest</p>
           <p className="text-[10px] mt-0.5 text-muted-foreground">
-            {enabled ? "Email sent every morning at 9h" : "No email will be sent"}
+            {enabled ? `Sent every morning at ${time}` : "No email will be sent"}
           </p>
         </div>
         <button
           type="button"
           onClick={() => setEnabled((v) => !v)}
           className={cn(
-            "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out",
+            "relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200",
             enabled ? "bg-emerald-500" : "bg-muted-foreground/25",
           )}
         >
           <span
             className={cn(
-              "pointer-events-none inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out",
-              enabled ? "translate-x-5" : "translate-x-0.5",
+              "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-200",
+              enabled ? "left-[22px]" : "left-0.5",
             )}
           />
         </button>
