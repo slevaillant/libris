@@ -357,7 +357,7 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
       .maybeSingle();
     if (existing) throw new Error("This video is already in your library");
 
-    const { fetchYouTubeVideo, chunkTranscript } = await import("@/lib/sources/youtube");
+    const { fetchYouTubeVideo, chunkTranscriptWithTimestamps } = await import("@/lib/sources/youtube");
     const video = await fetchYouTubeVideo(data.url);
 
     const content = video.transcript ?? video.description;
@@ -385,21 +385,30 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
     try {
       const ideas = await extractKeyIdeas(anthropic, video.title, video.author, content);
 
-      const textChunks = video.transcript
-        ? chunkTranscript(video.transcript)
-        : chunkByParagraph(video.description);
+      // Use timed chunks when transcript segments are available — each chunk is prefixed with
+      // [MM:SS] so RAG responses can cite exact moments. Fall back to paragraph chunking.
+      const timedChunks = video.timedSegments
+        ? chunkTranscriptWithTimestamps(video.timedSegments)
+        : null;
+      const plainChunks = timedChunks ? null : chunkByParagraph(video.description);
 
       const rawChunks: RawChunk[] = [
         ...ideas.map((idea, i) => ({
           content: idea,
           chunkType: "key_idea" as const,
-          sectionTitle: `Key idea ${i + 1}`,
+          sectionTitle: null,
           chunkIndex: i,
         })),
-        ...textChunks.map((p, i) => ({
+        ...(timedChunks ?? ([] as { text: string; startSeconds: number }[])).map((c, i) => ({
+          content: c.text,
+          chunkType: "passage" as const,
+          sectionTitle: c.text.match(/^\[(\d+:\d+)\]/)?.[1] ?? null, // "2:34" — UI builds ?t= link
+          chunkIndex: ideas.length + i,
+        })),
+        ...(plainChunks ?? ([] as string[])).map((p, i) => ({
           content: p,
           chunkType: "passage" as const,
-          sectionTitle: `Section ${i + 1}`,
+          sectionTitle: null,
           chunkIndex: ideas.length + i,
         })),
       ];
