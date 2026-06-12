@@ -58,6 +58,8 @@ async function extractTracksFromPage(
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      // Bypass YouTube's GDPR consent prompt served to EU datacenter IPs
+      "Cookie": "CONSENT=YES+1; PREF=f1=50000000&f6=8&hl=en",
     },
   }).catch(() => null);
 
