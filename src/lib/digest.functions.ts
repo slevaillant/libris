@@ -99,7 +99,7 @@ const L1 = `LIBRIS SYSTEM
 You are part of Libris, a personal knowledge intelligence system.
 CORE RULES:
 1. Only use knowledge from the user's indexed library.
-2. Every factual claim must cite a specific source: [Title — Author, Chapter N].
+2. Cite sources inline by author last name, e.g. (Huryn) or (Wensing). Never mention "Key idea N", "Section N", or any chunk label.
 3. If no relevant source exists: say so honestly.`;
 
 function buildDigestL2(displayName: string, librarianName: string): string {
@@ -161,7 +161,7 @@ async function synthesiseSection(
   }
 
   const passagesText = chunks
-    .map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}${c.chapter_title ? `, ${c.chapter_title}` : ""}\n${c.content.slice(0, 400)}`)
+    .map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 400)}`)
     .join("\n\n");
 
   const response = await anthropic.messages.create({
@@ -175,7 +175,7 @@ async function synthesiseSection(
           { type: "text" as const, text: buildDigestL2(displayName, librarianName), cache_control: { type: "ephemeral" as const } },
           {
             type: "text" as const,
-            text: `Meeting theme: "${theme}"\n\nRelevant passages from ${displayName}'s library:\n${passagesText}\n\nWrite one focused paragraph connecting this theme to the library. End with a specific reading suggestion if you have one.`,
+            text: `Meeting theme: "${theme}"\n\nRelevant passages from ${displayName}'s library:\n${passagesText}\n\nWrite 3-4 direct sentences connecting this theme to the most relevant passage(s). Quote or paraphrase the actual insight — don't summarise generically. Cite authors by last name inline. No bullet points. If you have a specific reading suggestion, add it as a final sentence starting with "→".`,
           },
         ],
       },
@@ -245,12 +245,17 @@ async function runDigestPipeline(
 
     const { synthesis, readingSuggestion } = await synthesiseSection(anthropic, displayName, librarianName, searchQuery, chunks);
 
-    const citations = chunks.slice(0, 3).map((c) => ({
-      title: c.title,
-      author: c.author,
-      chapterTitle: c.chapter_title,
-      url: c.url ?? null,
-    }));
+    // Deduplicate citations by source URL — same article matched by multiple chunks shows once
+    const seenSources = new Set<string>();
+    const citations = chunks
+      .filter((c) => {
+        const key = c.url ?? c.source_id;
+        if (seenSources.has(key)) return false;
+        seenSources.add(key);
+        return true;
+      })
+      .slice(0, 3)
+      .map((c) => ({ title: c.title, author: c.author, chapterTitle: null, url: c.url ?? null }));
     citationCount += citations.length;
 
     sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion });

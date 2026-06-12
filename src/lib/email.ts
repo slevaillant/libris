@@ -86,8 +86,7 @@ export function buildDigestEmail(
               ${c.url
                 ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
                 : `<strong>${c.title}</strong>`
-              }${c.author ? ` — ${c.author}` : ""}
-              ${c.chapterTitle ? `<br><span style="color:#6b7280;padding-left:18px;">${c.chapterTitle}</span>` : ""}
+              }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}
             </p>`,
             )
             .join("")}

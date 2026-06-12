@@ -140,7 +140,7 @@ export default {
 
               let synthesis = `My sources on "${displayTheme}" are thinner than I'd like.`;
               if (matched.length > 0) {
-                const passages = matched.map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}${c.chapter_title ? `, ${c.chapter_title}` : ""}\n${c.content.slice(0, 400)}`).join("\n\n");
+                const passages = matched.map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 400)}`).join("\n\n");
                 const res = await anthropic.messages.create({
                   model: "claude-opus-4-7", max_tokens: 1024,
                   messages: [{ role: "user", content: [
@@ -152,7 +152,11 @@ export default {
                 if (tb?.type === "text") synthesis = tb.text;
               }
 
-              const citations = matched.slice(0, 3).map(c => ({ title: c.title, author: c.author, chapterTitle: c.chapter_title, url: c.url ?? null }));
+              const seenUrls = new Set<string>();
+              const citations = matched
+                .filter(c => { const k = c.url ?? c.source_id; if (seenUrls.has(k)) return false; seenUrls.add(k); return true; })
+                .slice(0, 3)
+                .map(c => ({ title: c.title, author: c.author, chapterTitle: null, url: c.url ?? null }));
               citationCount += citations.length;
               sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion: null });
 
