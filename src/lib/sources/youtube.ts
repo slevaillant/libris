@@ -117,6 +117,50 @@ async function fetchPlayerResponse(videoId: string): Promise<PlayerResponse | nu
   }
 }
 
+// Gemini fallback: process the YouTube video directly via the Gemini API.
+// Used when the ANDROID player API returns LOGIN_REQUIRED (Cloudflare datacenter IPs).
+// Gemini accepts YouTube URLs as fileData and generates a timestamped transcript.
+async function fetchTranscriptViaGemini(videoId: string): Promise<YouTubeTimedSegment[] | null> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            {
+              fileData: {
+                fileUri: `https://www.youtube.com/watch?v=${videoId}`,
+                mimeType: "video/mp4",
+              },
+            },
+            {
+              text: "Generate a complete timestamped transcript of this video. Format each line as: [M:SS] text — where M is minutes and SS is seconds. Include every spoken sentence. Cover the full video from start to finish.",
+            },
+          ],
+        }],
+        generationConfig: { maxOutputTokens: 16384, temperature: 0.1 },
+      }),
+    },
+  ).catch(() => null);
+
+  if (!res?.ok) return null;
+  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  if (!text) return null;
+
+  const segments: YouTubeTimedSegment[] = [];
+  for (const m of text.matchAll(/\[(\d+):(\d{2})\]\s*(.+?)(?=\n\[|\n*$)/gs)) {
+    const t = m[3].trim();
+    if (t) segments.push({ startSeconds: parseInt(m[1]) * 60 + parseInt(m[2]), text: t });
+  }
+  return segments.length > 0 ? segments : null;
+}
+
 // Parse YouTube's timedtext format 3 XML: <p t="ms"> paragraphs with nested <s> words.
 function parseTimedtextXml(xml: string): YouTubeTimedSegment[] {
   const segments: YouTubeTimedSegment[] = [];
@@ -184,7 +228,14 @@ export async function fetchYouTubeVideo(url: string): Promise<YouTubeData> {
     } catch {}
   }
 
-  return { title, author, url, videoId, description, transcript, transcriptAvailable, timedSegments };
+  // Fallback: when the player API is blocked (datacenter IPs), use Gemini to generate
+  // a timestamped transcript directly from the YouTube URL.
+  if (!timedSegments) {
+    timedSegments = await fetchTranscriptViaGemini(videoId).catch(() => null);
+    if (timedSegments) transcript = timedSegments.map((s) => s.text).join(" ");
+  }
+
+  return { title, author, url, videoId, description, transcript, transcriptAvailable: transcriptAvailable || !!timedSegments, timedSegments };
 }
 
 // Chunk transcript into ~5-min timed segments (300 words each), prefixed with [MM:SS]
