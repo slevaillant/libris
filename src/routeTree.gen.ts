@@ -12,11 +12,15 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedLibraryRouteImport } from './routes/_authenticated/library'
+import { Route as AuthenticatedIndexBooksRouteImport } from './routes/_authenticated/index-books'
 import { Route as AuthenticatedImportRouteImport } from './routes/_authenticated/import'
 import { Route as AuthenticatedDigestRouteImport } from './routes/_authenticated/digest'
 import { Route as AuthenticatedChatRouteImport } from './routes/_authenticated/chat'
+import { Route as AuthenticatedBountyRouteImport } from './routes/_authenticated/bounty'
+import { Route as AuthenticatedQuizRunIdRouteImport } from './routes/_authenticated/quiz.$runId'
 import { Route as AuthenticatedBookIdRouteImport } from './routes/_authenticated/book.$id'
 
 const LoginRoute = LoginRouteImport.update({
@@ -33,6 +37,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JoinTokenRoute = JoinTokenRouteImport.update({
+  id: '/join/$token',
+  path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
@@ -41,6 +50,11 @@ const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
 const AuthenticatedLibraryRoute = AuthenticatedLibraryRouteImport.update({
   id: '/library',
   path: '/library',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedIndexBooksRoute = AuthenticatedIndexBooksRouteImport.update({
+  id: '/index-books',
+  path: '/index-books',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedImportRoute = AuthenticatedImportRouteImport.update({
@@ -58,6 +72,16 @@ const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedBountyRoute = AuthenticatedBountyRouteImport.update({
+  id: '/bounty',
+  path: '/bounty',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedQuizRunIdRoute = AuthenticatedQuizRunIdRouteImport.update({
+  id: '/quiz/$runId',
+  path: '/quiz/$runId',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedBookIdRoute = AuthenticatedBookIdRouteImport.update({
   id: '/book/$id',
   path: '/book/$id',
@@ -67,73 +91,98 @@ const AuthenticatedBookIdRoute = AuthenticatedBookIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/bounty': typeof AuthenticatedBountyRoute
   '/chat': typeof AuthenticatedChatRoute
   '/digest': typeof AuthenticatedDigestRoute
   '/import': typeof AuthenticatedImportRoute
+  '/index-books': typeof AuthenticatedIndexBooksRoute
   '/library': typeof AuthenticatedLibraryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/join/$token': typeof JoinTokenRoute
   '/book/$id': typeof AuthenticatedBookIdRoute
+  '/quiz/$runId': typeof AuthenticatedQuizRunIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/bounty': typeof AuthenticatedBountyRoute
   '/chat': typeof AuthenticatedChatRoute
   '/digest': typeof AuthenticatedDigestRoute
   '/import': typeof AuthenticatedImportRoute
+  '/index-books': typeof AuthenticatedIndexBooksRoute
   '/library': typeof AuthenticatedLibraryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/join/$token': typeof JoinTokenRoute
   '/book/$id': typeof AuthenticatedBookIdRoute
+  '/quiz/$runId': typeof AuthenticatedQuizRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
+  '/_authenticated/bounty': typeof AuthenticatedBountyRoute
   '/_authenticated/chat': typeof AuthenticatedChatRoute
   '/_authenticated/digest': typeof AuthenticatedDigestRoute
   '/_authenticated/import': typeof AuthenticatedImportRoute
+  '/_authenticated/index-books': typeof AuthenticatedIndexBooksRoute
   '/_authenticated/library': typeof AuthenticatedLibraryRoute
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/join/$token': typeof JoinTokenRoute
   '/_authenticated/book/$id': typeof AuthenticatedBookIdRoute
+  '/_authenticated/quiz/$runId': typeof AuthenticatedQuizRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/login'
+    | '/bounty'
     | '/chat'
     | '/digest'
     | '/import'
+    | '/index-books'
     | '/library'
     | '/onboarding'
+    | '/join/$token'
     | '/book/$id'
+    | '/quiz/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
+    | '/bounty'
     | '/chat'
     | '/digest'
     | '/import'
+    | '/index-books'
     | '/library'
     | '/onboarding'
+    | '/join/$token'
     | '/book/$id'
+    | '/quiz/$runId'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/login'
+    | '/_authenticated/bounty'
     | '/_authenticated/chat'
     | '/_authenticated/digest'
     | '/_authenticated/import'
+    | '/_authenticated/index-books'
     | '/_authenticated/library'
     | '/_authenticated/onboarding'
+    | '/join/$token'
     | '/_authenticated/book/$id'
+    | '/_authenticated/quiz/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  JoinTokenRoute: typeof JoinTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -159,6 +208,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/join/$token': {
+      id: '/join/$token'
+      path: '/join/$token'
+      fullPath: '/join/$token'
+      preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/onboarding': {
       id: '/_authenticated/onboarding'
       path: '/onboarding'
@@ -171,6 +227,13 @@ declare module '@tanstack/react-router' {
       path: '/library'
       fullPath: '/library'
       preLoaderRoute: typeof AuthenticatedLibraryRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/index-books': {
+      id: '/_authenticated/index-books'
+      path: '/index-books'
+      fullPath: '/index-books'
+      preLoaderRoute: typeof AuthenticatedIndexBooksRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/import': {
@@ -194,6 +257,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChatRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/bounty': {
+      id: '/_authenticated/bounty'
+      path: '/bounty'
+      fullPath: '/bounty'
+      preLoaderRoute: typeof AuthenticatedBountyRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/quiz/$runId': {
+      id: '/_authenticated/quiz/$runId'
+      path: '/quiz/$runId'
+      fullPath: '/quiz/$runId'
+      preLoaderRoute: typeof AuthenticatedQuizRunIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/book/$id': {
       id: '/_authenticated/book/$id'
       path: '/book/$id'
@@ -205,21 +282,27 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteChildren {
+  AuthenticatedBountyRoute: typeof AuthenticatedBountyRoute
   AuthenticatedChatRoute: typeof AuthenticatedChatRoute
   AuthenticatedDigestRoute: typeof AuthenticatedDigestRoute
   AuthenticatedImportRoute: typeof AuthenticatedImportRoute
+  AuthenticatedIndexBooksRoute: typeof AuthenticatedIndexBooksRoute
   AuthenticatedLibraryRoute: typeof AuthenticatedLibraryRoute
   AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
   AuthenticatedBookIdRoute: typeof AuthenticatedBookIdRoute
+  AuthenticatedQuizRunIdRoute: typeof AuthenticatedQuizRunIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedBountyRoute: AuthenticatedBountyRoute,
   AuthenticatedChatRoute: AuthenticatedChatRoute,
   AuthenticatedDigestRoute: AuthenticatedDigestRoute,
   AuthenticatedImportRoute: AuthenticatedImportRoute,
+  AuthenticatedIndexBooksRoute: AuthenticatedIndexBooksRoute,
   AuthenticatedLibraryRoute: AuthenticatedLibraryRoute,
   AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
   AuthenticatedBookIdRoute: AuthenticatedBookIdRoute,
+  AuthenticatedQuizRunIdRoute: AuthenticatedQuizRunIdRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -230,6 +313,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  JoinTokenRoute: JoinTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

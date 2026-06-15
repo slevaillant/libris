@@ -64,6 +64,7 @@ export function buildDigestEmail(
   librarianName: string,
   date: string,
   sections: DigestSection[],
+  quizUrl?: string,
 ): { subject: string; html: string; text: string } {
   const subject = `Your library for today — ${date}`;
 
@@ -142,6 +143,13 @@ export function buildDigestEmail(
         : ""
     }
     ${sourcesHtml}
+    ${quizUrl ? `
+    <div style="border-top:1px solid #e5e7eb;margin-top:32px;padding-top:24px;text-align:center;">
+      <p style="font-size:12px;color:#6b7280;margin:0 0 12px;">Ready to test your retention?</p>
+      <a href="${quizUrl}" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-size:12px;font-weight:600;padding:10px 24px;border-radius:8px;letter-spacing:0.01em;">
+        Test your memory →
+      </a>
+    </div>` : ""}
     <div style="border-top:1px solid #e5e7eb;margin-top:32px;padding-top:16px;">
       <p style="font-size:11px;color:#9ca3af;margin:0;">Libris · Your personal knowledge library</p>
     </div>

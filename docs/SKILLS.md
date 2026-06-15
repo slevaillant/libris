@@ -188,7 +188,42 @@ For AI repos specifically, also index:
 
 ---
 
-## 6. Source Authority Ranking
+## 6. Quiz Generation Domain
+
+### Purpose
+
+After the daily digest email, the user can click "Test your memory" to open a multiple-choice quiz
+at `/quiz/<digestRunId>`. Questions are generated on-demand from the `digest_themes.synthesis` text
+already stored in Supabase — no additional API calls to external data.
+
+### Question design rules
+
+A well-formed quiz question:
+- Tests **understanding of the key insight**, not surface recall of a word or name
+- Has exactly **4 options**: one unambiguously correct, three plausible distractors
+- Includes a one-sentence **explanation** that references the synthesis text
+- Is answerable from the synthesis alone — not from background knowledge
+
+Poor question (avoid): "Which company did the author mention as an example?"
+Good question: "According to the synthesis, what is the primary reason delegation fails in fast-growing teams?"
+
+### Model and prompt strategy
+
+- Model: `claude-haiku-4-5-20251001` (classification/extraction task)
+- One Haiku call per theme (parallelised)
+- Input capped at 1200 chars of synthesis to stay within Haiku's optimal window
+- `tool_choice: {type: "tool", name: "generate_question"}` — no freeform parsing
+- System prompt cached with `cache_control: {type: "ephemeral"}`
+
+### Failure modes
+
+- `correct_index` out of range (0–3): clamped server-side to prevent invalid state
+- Fewer than 4 options returned: question is discarded (returns `null`), not surfaced to user
+- All themes fail: throw `"Could not generate quiz questions — please try again"` to the UI
+
+---
+
+## 7. Source Authority Ranking
 
 When returning multiple results for a nudge, rank by:
 

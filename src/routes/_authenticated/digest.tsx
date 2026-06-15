@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import {
@@ -406,12 +406,20 @@ function DigestHistory({ refreshKey }: { refreshKey: number }) {
                   {run.themesFound} themes · {run.citationsFound} citations
                 </p>
               </div>
-              <div className="shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 {run.emailSent ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
                 ) : (
                   <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />
                 )}
+                <Link
+                  to="/quiz/$runId"
+                  params={{ runId: run.id }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
+                >
+                  Quiz
+                </Link>
               </div>
             </button>
 

@@ -267,7 +267,7 @@ type MemoryRow = {
 async function loadContextMemories(
   supabase: SupabaseClient,
   userId: string,
-): Promise<{ episodic: MemoryRow[]; preferences: MemoryRow[] }> {
+): Promise<{ episodic: MemoryRow[]; preferences: MemoryRow[]; patterns: MemoryRow[] }> {
   const { data } = await supabase
     .from("user_memories")
     .select("id, memory_type, content, response_summary, citations_used, confidence, last_referenced, created_at")
@@ -281,6 +281,7 @@ async function loadContextMemories(
   return {
     episodic: rows.filter((m) => m.memory_type === "episodic").slice(0, 20),
     preferences: rows.filter((m) => m.memory_type === "preference"),
+    patterns: rows.filter((m) => m.memory_type === "pattern"),
   };
 }
 
@@ -543,9 +544,15 @@ function formatMemoriesForL3(episodic: MemoryRow[]): string {
   return `\nRecent memory:\n${lines.join("\n")}`;
 }
 
-function formatPreferencesForL2(preferences: MemoryRow[]): string {
-  if (preferences.length === 0) return "";
-  return `\nKNOWN PREFERENCES:\n${preferences.map((p) => `- ${p.content}`).join("\n")}`;
+function formatPreferencesForL2(preferences: MemoryRow[], patterns: MemoryRow[]): string {
+  const parts: string[] = [];
+  if (preferences.length > 0) {
+    parts.push(`KNOWN PREFERENCES:\n${preferences.map((p) => `- ${p.content}`).join("\n")}`);
+  }
+  if (patterns.length > 0) {
+    parts.push(`USAGE PATTERNS (weekly analysis):\n${patterns.map((p) => `- ${p.content}`).join("\n")}`);
+  }
+  return parts.length > 0 ? `\n${parts.join("\n\n")}` : "";
 }
 
 // ─── Rate a nudge (thumbs up / down) ─────────────────────────────────────────
@@ -604,7 +611,7 @@ export const sendNudge = createServerFn({ method: "POST" })
     const displayName = (profile?.display_name as string) ?? "there";
     const librarianName = (profile?.librarian_name as string) ?? "Lumen";
     const professionalContext = (profile?.professional_context as string | null) ?? null;
-    const { episodic, preferences } = memoriesResult;
+    const { episodic, preferences, patterns } = memoriesResult;
 
     // 2. Embed the query
     const embedding = await embed(data.query);
@@ -657,7 +664,7 @@ export const sendNudge = createServerFn({ method: "POST" })
       .filter((c): c is MatchedChunk => !!c);
 
     // 6. Build prompts with memory context and synthesise (Sonnet)
-    const l2Suffix = formatPreferencesForL2(preferences);
+    const l2Suffix = formatPreferencesForL2(preferences, patterns);
     const l3Base = buildL3(data.turnNumber, data.sessionHistory, data.hasSummary);
     const l3 = l3Base + formatMemoriesForL3(episodic);
     const l4 = buildL4(displayName, data.query, selectedChunks, ragResult.coverage_quality);

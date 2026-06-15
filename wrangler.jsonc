@@ -8,6 +8,6 @@
     "directory": "dist/client"
   },
   "triggers": {
-    "crons": ["0 7 * * *"]
+    "crons": ["0 7 * * *", "0 6 * * SUN"]
   }
 }

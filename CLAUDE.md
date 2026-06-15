@@ -28,9 +28,11 @@ libris/
       library.tsx                ← Book + source browser
       digest.tsx                 ← Daily digest settings
       import.tsx                 ← Manual import (URL, PDF, book)
+      book.$id.tsx               ← Book detail — chapters, highlights, import from screenshot
       index-books.tsx            ← Bounty indexing flow (from Libris)
       join.$token.tsx            ← Invite redemption (from Libris)
       bounty.tsx                 ← Bounty management
+      quiz.$runId.tsx            ← Post-digest quiz (MCQ from digest themes)
     agents/
       orchestrator.agent.ts      ← Main Durable Object — routes + synthesises
       rag.agent.ts               ← Semantic search + passage selection
@@ -42,6 +44,8 @@ libris/
       library.functions.ts       ← Library CRUD (createServerFn)
       profile.functions.ts       ← User profile (createServerFn)
       chat.functions.ts          ← On-demand nudge server functions (createServerFn)
+      highlights.functions.ts    ← Highlight CRUD + Kindle screenshot import (createServerFn)
+      quiz.functions.ts          ← Quiz question generation from digest themes (createServerFn)
       bounty.functions.ts        ← Bounty system (createServerFn)
       digest.functions.ts        ← Digest preferences + history (createServerFn)
       chunking.ts                ← Source-type-aware chunking

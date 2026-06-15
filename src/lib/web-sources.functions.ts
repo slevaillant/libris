@@ -357,16 +357,18 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
       .maybeSingle();
     if (existing) throw new Error("This video is already in your library");
 
-    const { fetchYouTubeVideo, chunkTranscriptWithTimestamps, fetchTranscriptViaGemini } = await import("@/lib/sources/youtube");
+    const { fetchYouTubeVideo, chunkTranscriptWithTimestamps, fetchTranscriptViaGemini, formatTimestamp } = await import("@/lib/sources/youtube");
     const video = await fetchYouTubeVideo(data.url);
 
-    // If the player API was blocked (datacenter IP), use Gemini as fallback.
-    // This runs only during ingest, not during preview, to avoid 60s preview hangs.
+    // No captions from page scraping — try Gemini chapter summaries as fallback.
+    // Gemini segments are pre-chunked (each = one chapter summary) so they're used
+    // directly as chunks rather than being merged by chunkTranscriptWithTimestamps.
     if (!video.timedSegments) {
       const geminiSegments = await fetchTranscriptViaGemini(video.videoId).catch(() => null);
       if (geminiSegments) {
         video.timedSegments = geminiSegments;
         video.transcript = geminiSegments.map((s) => s.text).join(" ");
+        video.transcriptSource = "gemini";
       }
     }
 
@@ -395,12 +397,16 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
     try {
       const ideas = await extractKeyIdeas(anthropic, video.title, video.author, content);
 
-      // Use timed chunks when transcript segments are available — each chunk is prefixed with
-      // [MM:SS] so RAG responses can cite exact moments. Fall back to paragraph chunking.
-      const timedChunks = video.timedSegments
+      // 'captions': merge many short segments into 300-word timed chunks
+      // 'gemini':   use each chapter-summary segment directly as its own chunk
+      // null:       fall back to plain paragraph chunking of description
+      const timedChunks = video.transcriptSource === "captions" && video.timedSegments
         ? chunkTranscriptWithTimestamps(video.timedSegments)
         : null;
-      const plainChunks = timedChunks ? null : chunkByParagraph(video.description);
+      const geminiChunks = video.transcriptSource === "gemini" && video.timedSegments
+        ? video.timedSegments
+        : null;
+      const plainChunks = !timedChunks && !geminiChunks ? chunkByParagraph(video.description) : null;
 
       const rawChunks: RawChunk[] = [
         ...ideas.map((idea, i) => ({
@@ -409,13 +415,19 @@ export const ingestYouTubeVideo = createServerFn({ method: "POST" })
           sectionTitle: null,
           chunkIndex: i,
         })),
-        ...(timedChunks ?? ([] as { text: string; startSeconds: number }[])).map((c, i) => ({
+        ...(timedChunks ?? []).map((c, i) => ({
           content: c.text,
           chunkType: "passage" as const,
-          sectionTitle: c.text.match(/^\[(\d+:\d+)\]/)?.[1] ?? null, // "2:34" — UI builds ?t= link
+          sectionTitle: c.text.match(/^\[(\d+:\d+)\]/)?.[1] ?? null, // "2:34" — citation builds ?t= link
           chunkIndex: ideas.length + i,
         })),
-        ...(plainChunks ?? ([] as string[])).map((p, i) => ({
+        ...(geminiChunks ?? []).map((seg, i) => ({
+          content: `[${formatTimestamp(seg.startSeconds)}] ${seg.text}`,
+          chunkType: "passage" as const,
+          sectionTitle: formatTimestamp(seg.startSeconds),
+          chunkIndex: ideas.length + i,
+        })),
+        ...(plainChunks ?? []).map((p, i) => ({
           content: p,
           chunkType: "passage" as const,
           sectionTitle: null,

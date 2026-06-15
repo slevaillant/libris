@@ -10,36 +10,46 @@ import { cn } from "@/lib/utils";
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
-type LibraryFilter = "all" | "book" | "ebook" | "web" | "substack" | "github";
+type LibraryFilter = "all" | "book" | "ebook" | "web" | "youtube" | "substack" | "github";
 
 const FILTER_LABELS: Record<LibraryFilter, string> = {
   all: "All",
   book: "Books",
   ebook: "eBooks",
   web: "Web",
+  youtube: "YouTube",
   substack: "Substack",
   github: "GitHub",
 };
+
+function isYouTubeUrl(url: string | null): boolean {
+  if (!url) return false;
+  return url.includes("youtube.com") || url.includes("youtu.be");
+}
 
 function matchesFilter(s: SourceRow, f: LibraryFilter) {
   if (f === "all") return true;
   if (f === "book") return s.sourceType === "physical_book" || s.sourceType === "highlight_only";
   if (f === "ebook") return s.sourceType === "ebook" || s.sourceType === "pdf";
-  if (f === "web") return s.sourceType === "web_article";
+  if (f === "youtube") return s.sourceType === "web_article" && isYouTubeUrl(s.url);
+  if (f === "web") return s.sourceType === "web_article" && !isYouTubeUrl(s.url);
   if (f === "substack") return s.sourceType === "substack";
   if (f === "github") return s.sourceType === "github_repo";
   return true;
 }
 
-const SOURCE_TYPE_LABEL: Record<string, string> = {
-  physical_book: "Book",
-  ebook: "eBook",
-  pdf: "PDF",
-  substack: "Newsletter",
-  github_repo: "GitHub",
-  web_article: "Article",
-  highlight_only: "Highlights",
-};
+function sourceTypeLabel(s: SourceRow): string {
+  if (s.sourceType === "web_article") return isYouTubeUrl(s.url) ? "YouTube" : "Article";
+  const map: Record<string, string> = {
+    physical_book: "Book",
+    ebook: "eBook",
+    pdf: "PDF",
+    substack: "Newsletter",
+    github_repo: "GitHub",
+    highlight_only: "Highlights",
+  };
+  return map[s.sourceType] ?? s.sourceType;
+}
 
 export const Route = createFileRoute("/_authenticated/library")({
   component: Library,
@@ -128,7 +138,7 @@ function BookRow({
 
       {/* Type pill */}
       <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide bg-muted text-muted-foreground">
-        {SOURCE_TYPE_LABEL[source.sourceType] ?? source.sourceType}
+        {sourceTypeLabel(source)}
       </span>
 
       {/* Delete */}
@@ -251,7 +261,8 @@ function Library() {
               const tabs: LibraryFilter[] = ["all"];
               if (sources.some((s) => s.sourceType === "physical_book" || s.sourceType === "highlight_only")) tabs.push("book");
               if (sources.some((s) => s.sourceType === "ebook" || s.sourceType === "pdf")) tabs.push("ebook");
-              if (sources.some((s) => s.sourceType === "web_article")) tabs.push("web");
+              if (sources.some((s) => s.sourceType === "web_article" && !isYouTubeUrl(s.url))) tabs.push("web");
+              if (sources.some((s) => s.sourceType === "web_article" && isYouTubeUrl(s.url))) tabs.push("youtube");
               if (sources.some((s) => s.sourceType === "substack")) tabs.push("substack");
               if (sources.some((s) => s.sourceType === "github_repo")) tabs.push("github");
               if (tabs.length === 1) return null;

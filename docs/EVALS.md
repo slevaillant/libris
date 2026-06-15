@@ -216,6 +216,32 @@ LIMIT 20;
 
 ---
 
+### 11. Quiz Retention Rate
+**Layer**: Generation → User learning  
+**Target**: > 60% correct on first attempt per session
+
+The quiz gives a direct behavioural signal: did the user actually absorb the digest synthesis?
+Currently tracked client-side only (no DB). To persist for eval purposes, add a `quiz_attempts`
+table (migration when needed):
+
+```sql
+-- Proposed schema (not yet migrated)
+create table public.quiz_attempts (
+  id             uuid        primary key default gen_random_uuid(),
+  user_id        uuid        not null references auth.users(id) on delete cascade,
+  digest_run_id  uuid        not null references public.digest_runs(id) on delete cascade,
+  theme_text     text        not null,
+  correct        boolean     not null,
+  created_at     timestamptz not null default now()
+);
+```
+
+**Failure signal**: Consistently low score on a specific theme type → synthesis is too abstract
+or the question is poorly calibrated. Low overall score → user is not reading the digest
+before quizzing, or synthesis quality is thin.
+
+---
+
 ## Golden Dataset
 
 Location: `evals/golden_set.json`  

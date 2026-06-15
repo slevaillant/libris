@@ -337,7 +337,9 @@ export const runDigest = createServerFn({ method: "POST" })
     let emailSent = false;
     if (data.sendEmail && digestEmail) {
       const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-      const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections);
+      const appUrl = process.env.APP_URL ?? "https://libris.seblevaillant.com";
+      const quizUrl = `${appUrl}/quiz/${digestRunId}`;
+      const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections, quizUrl);
       const result = await sendEmail({ to: digestEmail, subject, html, text });
       emailSent = result.sent;
       if (!result.sent && result.error) console.error(`[digest] email failed: ${result.error}`);

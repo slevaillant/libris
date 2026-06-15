@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      bounty_configs: {
+        Row: {
+          active: boolean
+          currency: string
+          id: string
+          payment_link: string | null
+          price_per_book: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          currency?: string
+          id?: string
+          payment_link?: string | null
+          price_per_book?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          currency?: string
+          id?: string
+          payment_link?: string | null
+          price_per_book?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       chunks: {
         Row: {
           chapter_title: string | null
@@ -195,36 +225,54 @@ export type Database = {
           },
         ]
       }
-      indexing_bounties: {
+      indexer_invites: {
         Row: {
-          active: boolean
           created_at: string
-          currency: string
+          expires_at: string
           id: string
-          organization_id: string
-          payment_link: string | null
-          price_per_book: number
-          updated_at: string
+          owner_user_id: string
+          redeemed_at: string | null
+          redeemed_by: string | null
         }
         Insert: {
-          active?: boolean
           created_at?: string
-          currency?: string
+          expires_at?: string
           id?: string
-          organization_id: string
-          payment_link?: string | null
-          price_per_book?: number
-          updated_at?: string
+          owner_user_id: string
+          redeemed_at?: string | null
+          redeemed_by?: string | null
         }
         Update: {
-          active?: boolean
           created_at?: string
-          currency?: string
+          expires_at?: string
           id?: string
-          organization_id?: string
+          owner_user_id?: string
+          redeemed_at?: string | null
+          redeemed_by?: string | null
+        }
+        Relationships: []
+      }
+      indexer_memberships: {
+        Row: {
+          created_at: string
+          id: string
+          indexer_user_id: string
+          owner_user_id: string
+          payment_link: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          indexer_user_id: string
+          owner_user_id: string
           payment_link?: string | null
-          price_per_book?: number
-          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          indexer_user_id?: string
+          owner_user_id?: string
+          payment_link?: string | null
         }
         Relationships: []
       }
@@ -264,33 +312,6 @@ export type Database = {
           paid_at?: string | null
           price_per_book?: number
           started_at?: string
-        }
-        Relationships: []
-      }
-      invite_tokens: {
-        Row: {
-          expires_at: string
-          id: string
-          owner_user_id: string
-          role: string
-          used_at: string | null
-          used_by: string | null
-        }
-        Insert: {
-          expires_at?: string
-          id: string
-          owner_user_id: string
-          role?: string
-          used_at?: string | null
-          used_by?: string | null
-        }
-        Update: {
-          expires_at?: string
-          id?: string
-          owner_user_id?: string
-          role?: string
-          used_at?: string | null
-          used_by?: string | null
         }
         Relationships: []
       }
@@ -350,6 +371,8 @@ export type Database = {
         Row: {
           cache_hit: boolean
           created_at: string
+          flagged: boolean | null
+          helpful: boolean | null
           id: string
           latency_ms: number | null
           query_text: string
@@ -361,6 +384,8 @@ export type Database = {
         Insert: {
           cache_hit?: boolean
           created_at?: string
+          flagged?: boolean | null
+          helpful?: boolean | null
           id?: string
           latency_ms?: number | null
           query_text: string
@@ -372,6 +397,8 @@ export type Database = {
         Update: {
           cache_hit?: boolean
           created_at?: string
+          flagged?: boolean | null
+          helpful?: boolean | null
           id?: string
           latency_ms?: number | null
           query_text?: string
@@ -579,7 +606,28 @@ export type Database = {
       }
       increment_session_book_count: {
         Args: { p_session_id: string; p_user_id: string }
-        Returns: Json
+        Returns: number
+      }
+      indexer_create_chunks: {
+        Args: {
+          p_chunks: Json
+          p_indexer_id: string
+          p_session_id: string
+          p_source_id: string
+        }
+        Returns: undefined
+      }
+      indexer_create_source: {
+        Args: {
+          p_author: string
+          p_cover_url: string
+          p_indexer_id: string
+          p_isbn: string
+          p_session_id: string
+          p_shelf_location: string
+          p_title: string
+        }
+        Returns: string
       }
       match_chunks: {
         Args: {
@@ -600,6 +648,7 @@ export type Database = {
           source_id: string
           source_type: string
           title: string
+          url: string
         }[]
       }
       match_memories: {
@@ -616,9 +665,9 @@ export type Database = {
           similarity: number
         }[]
       }
-      redeem_invite: {
+      redeem_indexer_invite: {
         Args: { p_token: string; p_user_id: string }
-        Returns: Json
+        Returns: string
       }
       upsert_bounty_config: {
         Args: {
@@ -761,3 +810,5 @@ export const Constants = {
     Enums: {},
   },
 } as const
+A new version of Supabase CLI is available: v2.106.0 (currently installed v2.104.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli

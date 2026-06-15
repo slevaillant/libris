@@ -60,13 +60,89 @@ export default {
     }
   },
 
-  async scheduled(_event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
+  async scheduled(event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const { SUPABASE_URL, SUPABASE_SERVICE_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY } = env;
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       console.error("Cron: missing SUPABASE_URL or SUPABASE_SERVICE_KEY — skipping sync");
       return;
     }
 
+    const cronExpr = (event as { cron?: string }).cron ?? "";
+
+    // ── Weekly pattern analysis (Sunday 06:00 UTC) ───────────────────────────
+    if (cronExpr === "0 6 * * SUN") {
+      ctx.waitUntil(
+        (async () => {
+          const { createClient } = await import("@supabase/supabase-js");
+          const { default: Anthropic } = await import("@anthropic-ai/sdk");
+          const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+          const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
+          const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+          const { data: recentUsers } = await supabase
+            .from("nudges")
+            .select("user_id")
+            .gt("created_at", cutoff);
+
+          const userIds = [...new Set((recentUsers ?? []).map((r: { user_id: string }) => r.user_id))];
+
+          for (const userId of userIds) {
+            try {
+              const { data: nudges } = await supabase
+                .from("nudges")
+                .select("query_text, coverage_quality, helpful")
+                .eq("user_id", userId)
+                .order("created_at", { ascending: false })
+                .limit(30);
+
+              if (!nudges || nudges.length < 5) continue;
+
+              const nudgesText = (nudges as { query_text: string; coverage_quality: string | null; helpful: boolean | null }[])
+                .map((n) => `Q: ${n.query_text} [coverage: ${n.coverage_quality ?? "?"}, rating: ${n.helpful === true ? "good" : n.helpful === false ? "bad" : "unrated"}]`)
+                .join("\n");
+
+              const res = await anthropic.messages.create({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 256,
+                system: [{ type: "text" as const, text: "Analyse query patterns in a personal knowledge system. Extract 3–5 pattern observations about recurring topics, coverage gaps, or usage habits. Use the extract_patterns tool only.", cache_control: { type: "ephemeral" as const } }],
+                tools: [{
+                  name: "extract_patterns",
+                  description: "Extract usage pattern observations",
+                  input_schema: { type: "object" as const, properties: { patterns: { type: "array" as const, items: { type: "string" as const }, minItems: 1, maxItems: 5 } }, required: ["patterns"] },
+                }],
+                tool_choice: { type: "tool" as const, name: "extract_patterns" },
+                messages: [{ role: "user", content: `Recent queries (last 30):\n\n${nudgesText}` }],
+              });
+
+              const toolUse = res.content.find((b) => b.type === "tool_use");
+              if (!toolUse || toolUse.type !== "tool_use") continue;
+              const patterns = (toolUse.input as { patterns: string[] }).patterns;
+
+              await supabase.from("user_memories").delete().eq("user_id", userId).eq("memory_type", "pattern");
+              if (patterns.length > 0) {
+                const expires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+                await supabase.from("user_memories").insert(
+                  patterns.map((p) => ({
+                    user_id: userId,
+                    memory_type: "pattern",
+                    content: p,
+                    confidence: 0.7,
+                    expires_at: expires,
+                    last_referenced: new Date().toISOString(),
+                  })),
+                );
+              }
+              console.log(`Cron pattern analysis: ${patterns.length} patterns for user ${userId}`);
+            } catch (err) {
+              console.error(`Cron pattern analysis failed for ${userId}:`, err);
+            }
+          }
+        })(),
+      );
+      return;
+    }
+
+    // ── Daily digest + Substack sync (07:00 UTC weekdays) ────────────────────
     ctx.waitUntil(
       (async () => {
         const { createClient } = await import("@supabase/supabase-js");
@@ -168,7 +244,9 @@ export default {
             await supabase.from("digest_runs").update({ citations_found: citationCount }).eq("id", digestRunId);
 
             const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-            const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections);
+            const appUrl = process.env.APP_URL ?? "https://libris.seblevaillant.com";
+            const quizUrl = `${appUrl}/quiz/${digestRunId}`;
+            const { subject, html, text } = buildDigestEmail(displayName, librarianName, dateLabel, sections, quizUrl);
             const result = await sendEmail({ to: p.digest_email as string, subject, html, text });
 
             await supabase.from("digest_runs").update({ email_sent: result.sent, email_sent_at: result.sent ? new Date().toISOString() : null }).eq("id", digestRunId);

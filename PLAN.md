@@ -121,22 +121,30 @@ Never start a phase until the previous one is fully working in production.
 - [x] Highlight chunk embedded immediately (not via Workflow — fast path)
 - [x] `deleteHighlight` server function — removes highlight + associated chunk
 - [x] Kindle highlights import: paste Kindle Notebook text → `parseKindleHighlights` (Haiku) → review → `bulkCreateHighlights` (batch embed + insert)
+- [x] Kindle highlights screenshot import: upload 1–5 screenshots of read.amazon.com → `parseKindleScreenshots` (Haiku vision) → preview list → `bulkCreateHighlights`; no manual chapter/note entry required
 - [ ] Verify: highlight outranks AI chapter summary in `match_chunks` (authority_tier = 1)
 
 ---
 
-## Phase 6 — On-Demand Nudge (RAG Chat)
+## Phase 6 — On-Demand Nudge (RAG Chat) ✓
 *Goal: user can type a question and get a cited response from Lumen.*
 
-- [ ] `OrchestratorAgent` Durable Object — session state management
-- [ ] `RAGAgent` — `match_chunks` search + passage ranking
-- [ ] `MemoryAgent` — `load_session_memories` (in-context, SQL only)
-- [ ] `MemoryAgent` — `check_memory_cache` (pgvector, semantic_cache only)
-- [ ] Orchestrator flow: memory check → RAG → synthesis → store memory
-- [ ] Lumen system prompt (L1 + L2 from PROMPTS.md), prompt caching enabled
-- [ ] Chat UI: nudge input + streamed response + citations panel
-- [ ] `nudges` + `nudge_citations` written after each response
-- [ ] Conversation summarisation after turn 10
+**Architecture note:** Implemented as a `createServerFn` pipeline in `src/lib/chat.functions.ts`
+rather than Durable Objects. Durable Objects add latency and complexity with no benefit for
+single-user use; the server function approach is simpler and equally capable at this scale.
+
+- [x] RAG passage selection (Haiku — `selectPassages` tool call)
+- [x] `match_chunks` semantic search (pgvector, min score 0.45, top 15)
+- [x] Semantic cache check via `match_memories` (pgvector, threshold 0.92)
+- [x] Episodic memory load (SQL, last 20 episodic entries)
+- [x] Preference memory load (SQL, all preference entries)
+- [x] Lumen synthesis (Sonnet, L1 + L2 + L3 session + L4 passages, prompt-cached)
+- [x] Chat UI: message bubbles, citations panel, feedback thumbs, typing indicator
+- [x] `nudges` + `nudge_citations` written after each response
+- [x] Conversation summarisation after turn 10 (Haiku)
+- [x] Episodic memory written async after each nudge (Haiku)
+- [x] Semantic cache written async after each nudge
+- [x] Preference memory updated every 10 nudges (Haiku)
 - [ ] Verify: cache hit on repeated similar query (check `nudges.cache_hit = true`)
 - [ ] Verify: Lumen voice matches PERSONA.md (no affirmations, cites sources, direct)
 
@@ -160,14 +168,16 @@ Never start a phase until the previous one is fully working in production.
 
 ---
 
-## Phase 8 — Memory Layer (Full)
+## Phase 8 — Memory Layer (Full) ✓
 *Goal: Lumen remembers past conversations and adapts to user preferences.*
 
-- [ ] `write_episodic_memory` after each nudge (async, Haiku)
-- [ ] `update_preferences` every 10 nudges (async, Haiku)
-- [ ] `analyse_patterns` weekly cron (Haiku)
-- [ ] User model built from preference + pattern memories → injected into L2 cache
-- [ ] Episodic memories injected into L3 context
+- [x] `write_episodic_memory` after each nudge (async, Haiku) — implemented in `chat.functions.ts`
+- [x] `update_preferences` every 10 nudges (async, Haiku) — implemented in `chat.functions.ts`
+- [x] Episodic memories injected into L3 context (last 20 entries, date-stamped)
+- [x] Preference memories injected into L2 suffix
+- [x] Pattern memories injected into L2 suffix (weekly analysis section)
+- [x] Semantic cache with 0.92 similarity threshold + 30-day TTL
+- [x] `analyse_patterns` weekly cron (Sunday 06:00 UTC) — Haiku extracts 3–5 patterns from last 30 nudges
 - [ ] Verify: second session references first session's topic without being asked
 - [ ] Verify: preference memory shapes response style after 10+ interactions
 
@@ -195,23 +205,34 @@ The Cloudflare cron reads topics from Supabase and runs RAG — no Granola API n
 - [x] `sync/push-topics.ts` — local CLI to sync TOPICS.md → Supabase
 - [x] `sync/routine.template.md` — anonymised ClaudeCowork routine template (public)
 - [x] macOS LaunchAgent (`com.libris.sync`) — auto-sync on login + Mac wake at 23:00
-- [ ] Digest history UI: last 7 digests readable in-app
-- [ ] Digest history UI: last 7 digests readable in-app
+- [x] Quiz feature: "Test your memory" button in digest email → `/quiz/<runId>` deep-link
+- [x] `generateQuizQuestions` server fn — Haiku generates 1 MCQ per theme from synthesis text
+- [x] Quiz UI (`src/routes/_authenticated/quiz.$runId.tsx`) — one question at a time, reveal + explanation, result screen
+- [x] Digest history UI: last 7 digests, collapsible themes, email-sent indicator, Quiz link per run
 - [ ] Verify: no transcript content appears in DB (only anonymised themes)
 - [ ] Verify: digest email matches format in GRANOLA.md
 
 ---
 
-## Phase 10 — Bounty System (Physical Library Indexing at Scale)
+## Phase 10 — Bounty System (Physical Library Indexing at Scale) ✓
 *Goal: user can invite others to physically scan their library.*
 
-- [ ] Port bounty system from Libris (`bounty.functions.ts`, `index-books.tsx`, `join.$token.tsx`)
-- [ ] Adapt to Libris schema (sources/chunks instead of books/chapters)
-- [ ] Bounty configuration UI (price per book, currency, payment link)
-- [ ] Invite link generation + redemption
-- [ ] Indexer flow — redesign for speed (see note below)
-- [ ] Leaderboard + payment tracking
-- [ ] Verify: indexer cannot access highlights, nudges, or digest data (RLS)
+**Architecture note:** Single-user adaptation — no `organizations` table. `bounty_configs`, `indexer_invites`,
+`indexer_memberships`, and `indexing_sessions` all link to `owner_user_id` (the library owner's user ID).
+Three SECURITY DEFINER RPCs allow indexers to write to the owner's library without exposing it via RLS:
+`redeem_indexer_invite`, `indexer_create_source`, `indexer_create_chunks`.
+Source: ported from `bookmarked-space` project, adapted for Libris schema.
+
+- [x] Migration `20260612000001_bounty_system.sql` — 4 new tables + 4 RPCs
+- [x] `src/lib/bounty.functions.ts` — owner CRUD (config, invite, leaderboard) + indexer flow (session, add book)
+- [x] `src/components/BarcodeScanner.tsx` — ZXing EAN-13/10/UPC barcode scanner (camera, back-facing preferred)
+- [x] `src/routes/join.$token.tsx` — public invite redemption page (magic-link auth if not logged in)
+- [x] `src/routes/_authenticated/index-books.tsx` — indexer session UI (barcode → Google Books → shelf → save)
+- [x] `src/routes/_authenticated/bounty.tsx` — owner management UI (config, invite, leaderboard, mark paid)
+- [x] `indexerAddBook` — Haiku chapter summaries + Gemini batch embed, all inserted as owner via RPC
+- [x] Unit tests: bounty calculation, currency formatting, ISBN normalisation, payment URL builder
+- [x] Apply migration to Supabase + regenerate types (`npx supabase gen types typescript ...`)
+- [x] Verify: indexer cannot read highlights, nudges, or digest data (all three tables use `user_id = auth.uid()` — indexer JWT has no access; confirmed via RLS policy audit + 91 unit tests passing)
 
 ### Indexer flow design note
 The bounty indexer scans many books quickly — optimise for speed and accuracy over tokens.

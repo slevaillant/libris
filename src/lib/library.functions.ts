@@ -22,6 +22,7 @@ export type SourceRow = {
   title: string;
   author: string | null;
   isbn: string | null;
+  url: string | null;
   coverUrl: string | null;
   description: string | null;
   totalChunks: number;
@@ -410,7 +411,7 @@ export const listSources = createServerFn({ method: "POST" })
     const { data, error } = await supabase
       .from("sources")
       .select(
-        "id, source_type, title, author, isbn, cover_url, description, total_chunks, ingest_status, created_at",
+        "id, source_type, title, author, isbn, url, cover_url, description, total_chunks, ingest_status, created_at",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
@@ -424,6 +425,7 @@ export const listSources = createServerFn({ method: "POST" })
         title: s.title,
         author: s.author,
         isbn: s.isbn,
+        url: s.url as string | null,
         coverUrl: s.cover_url,
         description: s.description,
         totalChunks: s.total_chunks,

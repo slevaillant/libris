@@ -164,6 +164,88 @@ export type ParsedHighlight = {
   note?: string;
 };
 
+// ─── Parse Kindle highlights from screenshots via Haiku vision ───────────────
+
+export const parseKindleScreenshots = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        images: z
+          .array(
+            z.object({
+              data: z.string().min(100),
+              mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+            }),
+          )
+          .min(1)
+          .max(5),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data }) => {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 8192,
+      system: [
+        {
+          type: "text" as const,
+          text: "You extract Kindle reading highlights from screenshots of the Amazon Kindle web reader (read.amazon.com) or the Kindle highlights page. Each highlight is a yellow-highlighted passage. Look for chapter or section headings that appear above groups of highlights. Include any personal notes the reader added beneath a highlight.",
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+      tools: [
+        {
+          name: "extract_highlights",
+          description: "Extract all highlights visible in the screenshot(s)",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              highlights: {
+                type: "array" as const,
+                items: {
+                  type: "object" as const,
+                  properties: {
+                    content: { type: "string" as const, description: "The highlighted passage text" },
+                    chapter: { type: "string" as const, description: "Chapter or section heading, if visible" },
+                    note: { type: "string" as const, description: "Reader note attached to this highlight, if any" },
+                  },
+                  required: ["content"],
+                },
+              },
+            },
+            required: ["highlights"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool" as const, name: "extract_highlights" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...data.images.map((img) => ({
+              type: "image" as const,
+              source: {
+                type: "base64" as const,
+                media_type: img.mediaType,
+                data: img.data,
+              },
+            })),
+            { type: "text" as const, text: "Extract all Kindle highlights from these screenshot(s)." },
+          ],
+        },
+      ],
+    });
+
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") return [] as ParsedHighlight[];
+
+    const parsed = toolUse.input as { highlights: ParsedHighlight[] };
+    return (parsed.highlights ?? []) as ParsedHighlight[];
+  });
+
 // ─── Parse raw Kindle notebook text into structured highlights (Haiku) ────────
 
 export const parseKindleHighlights = createServerFn({ method: "POST" })

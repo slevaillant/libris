@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Highlighter,
+  ImageIcon,
   Plus,
   Trash2,
   X,
@@ -22,7 +23,10 @@ import {
   createHighlight,
   listHighlights,
   deleteHighlight,
+  parseKindleScreenshots,
+  bulkCreateHighlights,
   type HighlightRow,
+  type ParsedHighlight,
 } from "@/lib/highlights.functions";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -297,6 +301,184 @@ function AddHighlightForm({
   );
 }
 
+// ─── Import highlights from screenshots ───────────────────────────────────────
+
+function ImportHighlightsPanel({
+  sourceId,
+  onImported,
+  onCancel,
+}: {
+  sourceId: string;
+  onImported: () => void;
+  onCancel: () => void;
+}) {
+  const parseFn = useServerFn(parseKindleScreenshots);
+  const bulkFn = useServerFn(bulkCreateHighlights);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  type ImageEntry = { preview: string; data: string; mediaType: "image/jpeg" | "image/png" | "image/webp" };
+  const [images, setImages] = useState<ImageEntry[]>([]);
+  const [parsed, setParsed] = useState<ParsedHighlight[] | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  const addFiles = (files: FileList) => {
+    const allowed = ["image/jpeg", "image/png", "image/webp"] as const;
+    Array.from(files)
+      .slice(0, 5 - images.length)
+      .forEach((file) => {
+        if (!allowed.includes(file.type as (typeof allowed)[number])) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const dataUrl = e.target?.result as string;
+          const comma = dataUrl.indexOf(",");
+          const header = dataUrl.slice(0, comma);
+          const mediaType = header.replace("data:", "").replace(";base64", "") as (typeof allowed)[number];
+          setImages((prev) => [...prev, { preview: dataUrl, data: dataUrl.slice(comma + 1), mediaType }]);
+        };
+        reader.readAsDataURL(file);
+      });
+  };
+
+  const handleExtract = async () => {
+    if (images.length === 0) return;
+    setExtracting(true);
+    try {
+      const result = await parseFn({
+        data: { images: images.map(({ data, mediaType }) => ({ data, mediaType })) },
+      });
+      setParsed(result);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Extraction failed");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!parsed || parsed.length === 0) return;
+    setImporting(true);
+    try {
+      await bulkFn({
+        data: {
+          sourceId,
+          highlights: parsed.map((h) => ({
+            content: h.content,
+            chapter: h.chapter,
+            note: h.note,
+          })),
+        },
+      });
+      toast.success(`Imported ${parsed.length} highlight${parsed.length !== 1 ? "s" : ""}`);
+      onImported();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Import failed");
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-400/40 bg-amber-500/5 p-3.5 space-y-3">
+      {!parsed ? (
+        <>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => inputRef.current?.click()}
+            onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files) addFiles(e.dataTransfer.files); }}
+            className="flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-amber-400/30 hover:border-amber-400/60 transition-colors cursor-pointer py-6 px-3"
+          >
+            <ImageIcon className="h-5 w-5 text-muted-foreground/40" />
+            <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+              Drop screenshots of your Kindle highlights page, or click to select
+              <br />
+              <span className="text-muted-foreground/50">Up to 5 images · JPEG, PNG, WebP</span>
+            </p>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="hidden"
+              onChange={(e) => e.target.files && addFiles(e.target.files)}
+            />
+          </div>
+
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {images.map((img, i) => (
+                <div key={i} className="relative h-16 w-16 rounded overflow-hidden border border-border shrink-0">
+                  <img src={img.preview} alt={`Screenshot ${i + 1}`} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute top-0.5 right-0.5 rounded-full bg-background/80 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                    aria-label="Remove image"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-muted-foreground font-medium">
+            Found {parsed.length} highlight{parsed.length !== 1 ? "s" : ""}
+          </p>
+          <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+            {parsed.map((h, i) => (
+              <div key={i} className="rounded border border-border px-2.5 py-2 space-y-0.5">
+                <p className="text-[10px] italic leading-relaxed">{h.content}</p>
+                {h.chapter && <p className="text-[9px] text-muted-foreground/60">{h.chapter}</p>}
+                {h.note && <p className="text-[9px] text-muted-foreground">{h.note}</p>}
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setParsed(null)}
+            className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+          >
+            ← Back to upload
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-2 pt-1">
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={extracting || importing}>
+          <X className="h-3 w-3" />
+          Cancel
+        </Button>
+        {!parsed ? (
+          <Button
+            size="sm"
+            onClick={handleExtract}
+            disabled={images.length === 0 || extracting}
+            className="flex-1"
+          >
+            {extracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            {extracting ? "Extracting…" : "Extract highlights"}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            onClick={handleImport}
+            disabled={parsed.length === 0 || importing}
+            className="flex-1"
+          >
+            {importing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Highlighter className="h-3 w-3" />}
+            {importing ? "Importing…" : `Import ${parsed.length} highlight${parsed.length !== 1 ? "s" : ""}`}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Root component ───────────────────────────────────────────────────────────
 
 function BookDetail() {
@@ -311,6 +493,7 @@ function BookDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addingHighlight, setAddingHighlight] = useState(false);
+  const [importingHighlights, setImportingHighlights] = useState(false);
   const [reindexing, setReindexing] = useState(false);
 
   const handleReindex = async () => {
@@ -329,6 +512,9 @@ function BookDetail() {
       setReindexing(false);
     }
   };
+
+  const refreshHighlights = () =>
+    fetchHighlights({ data: { sourceId: id } }).then(setHighlights).catch(() => undefined);
 
   useEffect(() => {
     Promise.all([
@@ -445,17 +631,38 @@ function BookDetail() {
                     )}
                   </h2>
                 </div>
-                {!addingHighlight && (
-                  <button
-                    type="button"
-                    onClick={() => setAddingHighlight(true)}
-                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add
-                  </button>
+                {!addingHighlight && !importingHighlights && (
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setImportingHighlights(true)}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none"
+                    >
+                      <ImageIcon className="h-3 w-3" />
+                      Import
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddingHighlight(true)}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground active:opacity-60 transition-all cursor-pointer select-none"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add
+                    </button>
+                  </div>
                 )}
               </div>
+
+              {importingHighlights && (
+                <ImportHighlightsPanel
+                  sourceId={id}
+                  onImported={() => {
+                    setImportingHighlights(false);
+                    void refreshHighlights();
+                  }}
+                  onCancel={() => setImportingHighlights(false)}
+                />
+              )}
 
               {addingHighlight && (
                 <AddHighlightForm
@@ -469,7 +676,7 @@ function BookDetail() {
                 />
               )}
 
-              {highlights.length === 0 && !addingHighlight && (
+              {highlights.length === 0 && !addingHighlight && !importingHighlights && (
                 <p className="text-[10px] text-muted-foreground py-1">
                   No highlights yet. Add one to give Lumen direct access to the passages that matter most to you.
                 </p>
