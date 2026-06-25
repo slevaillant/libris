@@ -247,9 +247,11 @@ export const previewGithubRepo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => z.object({ url: z.string().url() }).parse(i))
   .handler(async ({ data }): Promise<WebSourcePreview> => {
-    const { fetchGithubRepo } = await import("@/lib/sources/github");
+    const { fetchGithubRepo, fetchGithubGist, isGistUrl } = await import("@/lib/sources/github");
     const token = process.env.GITHUB_TOKEN;
-    const repo = await fetchGithubRepo(data.url, token);
+    const repo = isGistUrl(data.url)
+      ? await fetchGithubGist(data.url, token)
+      : await fetchGithubRepo(data.url, token);
     return {
       title: repo.title,
       description: repo.description,
@@ -265,7 +267,7 @@ export const ingestGithubRepo = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => z.object({ url: z.string().url() }).parse(i))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { fetchGithubRepo } = await import("@/lib/sources/github");
+    const { fetchGithubRepo, fetchGithubGist, isGistUrl } = await import("@/lib/sources/github");
 
     // Skip if already indexed
     const { data: existing } = await supabase
@@ -277,7 +279,9 @@ export const ingestGithubRepo = createServerFn({ method: "POST" })
     if (existing) throw new Error("This repo is already in your library");
 
     const token = process.env.GITHUB_TOKEN;
-    const repo = await fetchGithubRepo(data.url, token);
+    const repo = isGistUrl(data.url)
+      ? await fetchGithubGist(data.url, token)
+      : await fetchGithubRepo(data.url, token);
 
     if (repo.chunks.length === 0) throw new Error("No indexable content found in this repo");
 

@@ -113,6 +113,68 @@ function parseOwnerRepo(url: string): { owner: string; repo: string } | null {
   return { owner: m[1], repo: m[2].replace(/\.git$/, "") };
 }
 
+function parseGistId(url: string): { gistId: string; author: string } | null {
+  const m = url.match(/gist\.github\.com\/([^/]+)\/([a-f0-9]+)/i);
+  if (!m) return null;
+  return { author: m[1], gistId: m[2] };
+}
+
+export function isGistUrl(url: string): boolean {
+  return url.includes("gist.github.com/");
+}
+
+export async function fetchGithubGist(gistUrl: string, token?: string): Promise<GithubRepoMeta> {
+  const parsed = parseGistId(gistUrl);
+  if (!parsed) throw new Error("Invalid GitHub Gist URL");
+
+  const res = await githubFetch(`/gists/${parsed.gistId}`, token);
+  if (!res.ok) throw new Error(`Gist not found or not accessible (HTTP ${res.status})`);
+
+  const gist = await res.json() as {
+    description: string | null;
+    html_url: string;
+    files: Record<string, {
+      filename: string;
+      language: string | null;
+      content: string;
+    }>;
+  };
+
+  const TEXT_LANGUAGES = new Set([
+    "Markdown", "Text", "JSON", "YAML", "TOML", "XML",
+    "CSV", "TSV", null,
+  ]);
+
+  const chunks: GithubChunk[] = [];
+
+  for (const file of Object.values(gist.files)) {
+    if (!TEXT_LANGUAGES.has(file.language)) continue;
+    if (file.filename.endsWith(".md") || file.language === "Markdown") {
+      chunks.push(...chunkMarkdown(file.content, file.filename));
+    } else {
+      const paragraphs = file.content.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 40);
+      paragraphs.forEach((p, i) => {
+        chunks.push({ content: p, sectionTitle: `${file.filename} (${i + 1})`, filePath: file.filename });
+      });
+    }
+  }
+
+  if (chunks.length === 0) {
+    const allContent = Object.values(gist.files).map((f) => f.content).join("\n\n").slice(0, 2400);
+    chunks.push({ content: allContent, sectionTitle: null, filePath: "gist" });
+  }
+
+  const title = gist.description || Object.keys(gist.files)[0] || "GitHub Gist";
+
+  return {
+    title,
+    description: gist.description,
+    url: gist.html_url,
+    defaultBranch: "main",
+    chunks,
+  };
+}
+
 async function githubFetch(path: string, token?: string): Promise<Response> {
   return fetch(`https://api.github.com${path}`, {
     headers: {

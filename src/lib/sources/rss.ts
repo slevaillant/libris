@@ -27,7 +27,7 @@ function cdataOrText(xml: string, tag: string): string | null {
   return decodeEntities((m[1] ?? m[2] ?? "").trim());
 }
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")

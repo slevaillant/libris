@@ -1,4 +1,4 @@
-import { stripHtml } from "./rss";
+import { stripHtml, decodeEntities } from "./rss";
 
 export type WebArticleData = {
   title: string;
@@ -51,10 +51,11 @@ export async function fetchWebArticle(url: string): Promise<WebArticleData> {
   const html = await res.text();
 
   // Extract metadata from <meta> tags
-  const title =
+  const title = decodeEntities(
     metaContent(html, "og:title", "twitter:title") ??
     titleTag(html) ??
-    url;
+    url,
+  );
 
   const author =
     metaContent(html, "author", "article:author", "twitter:creator") ?? null;
