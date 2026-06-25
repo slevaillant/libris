@@ -118,7 +118,7 @@ Finds non-obvious links across sources:
 ### Performance
 - On-demand nudge response: <3 seconds end-to-end
 - Ingestion: non-blocking (queue-based, never fails the UI)
-- Daily digest: generated at 06:00 user local time
+- Daily digest: generated at 10:00 CEST (08:00 UTC)
 
 ### Privacy & Security
 - Single-user first — all data scoped to `user_id` via Supabase RLS

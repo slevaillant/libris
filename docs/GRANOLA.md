@@ -17,10 +17,10 @@ that drives proactive knowledge surfacing.
 
 ---
 
-## Daily Digest Pipeline (Scheduled — 06:00 local time)
+## Daily Digest Pipeline (Scheduled — 10:00 CEST / 08:00 UTC)
 
 ```
-06:00 — Digest Workflow starts
+10:00 — Digest Workflow starts
    │
    ├─ 1. list_meetings(date = yesterday)
    │        → array of { meeting_id, title, duration, participants }

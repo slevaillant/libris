@@ -70,7 +70,7 @@ export default {
     const cronExpr = (event as { cron?: string }).cron ?? "";
 
     // ── Weekly pattern analysis (Sunday 06:00 UTC) ───────────────────────────
-    if (cronExpr === "0 6 * * SUN") {
+    if (cronExpr === "0 8 * * SUN") {
       ctx.waitUntil(
         (async () => {
           const { createClient } = await import("@supabase/supabase-js");

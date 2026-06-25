@@ -187,11 +187,11 @@ single-user use; the server function approach is simpler and equally capable at 
 *Goal: user receives a morning email connecting their daily topics to their library.*
 
 **Architecture note:** Direct Granola MCP integration replaced by a TOPICS.md-based pipeline.
-A ClaudeCowork routine (runs at 18h local) analyses Granola meetings + Slack activity and writes
-`TOPICS.md` in Obsidian. A local script (`sync/push-topics.ts`) syncs the file to Supabase.
+A ClaudeCowork routine (runs at 09:00 local) analyses Granola meetings + Slack activity and writes
+`TOPICS.md` in Obsidian. A local script (`sync/push-topics.ts`) syncs the file to Supabase at 09:30.
 The Cloudflare cron reads topics from Supabase and runs RAG — no Granola API needed server-side.
 
-- [x] Cron scheduled task (07:00 UTC = 09:00 Paris) via Cloudflare Workers `scheduled` handler
+- [x] Cron scheduled task (08:00 UTC = 10:00 CEST) via Cloudflare Workers `scheduled` handler
 - [x] `parseTopicsFromMd` — extracts RAG search queries ("Question à explorer") from TOPICS.md
 - [x] `parseTopicTitlesFromMd` — extracts short display titles (shown as section headers)
 - [x] Parallel RAG search per topic (`match_chunks`, min similarity 0.50)
@@ -204,7 +204,7 @@ The Cloudflare cron reads topics from Supabase and runs RAG — no Granola API n
 - [x] Test panel: "My topics" (reads from TOPICS.md in Supabase) + "Sample themes" fallback
 - [x] `sync/push-topics.ts` — local CLI to sync TOPICS.md → Supabase
 - [x] `sync/routine.template.md` — anonymised ClaudeCowork routine template (public)
-- [x] macOS LaunchAgent (`com.libris.sync`) — auto-sync on login + Mac wake at 23:00
+- [x] macOS LaunchAgent (`com.libris.sync`) — auto-sync at 09:30 daily; `com.seb.claude-wake` opens Claude at 09:00; Mac wakes via `pmset wakeorpoweron` at 09:00
 - [x] Quiz feature: "Test your memory" button in digest email → `/quiz/<runId>` deep-link
 - [x] `generateQuizQuestions` server fn — Haiku generates 1 MCQ per theme from synthesis text
 - [x] Quiz UI (`src/routes/_authenticated/quiz.$runId.tsx`) — one question at a time, reveal + explanation, result screen

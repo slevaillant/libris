@@ -321,7 +321,7 @@ Input: { userId: string }
 ## 6. DigestAgent
 
 **File**: `src/agents/digest.agent.ts`
-**Runtime**: Cloudflare Agents SDK scheduled task (runs at 06:00 user local time)
+**Runtime**: Cloudflare Workers scheduled task (runs at 08:00 UTC = 10:00 CEST)
 **Model**: `claude-haiku-4-5` (theme extraction) + `claude-opus-4-7` (synthesis)
 **Responsibility**: Pulls yesterday's Granola meetings, extracts themes, searches
 knowledge base, synthesises a morning digest email.

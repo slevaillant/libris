@@ -94,7 +94,7 @@ If match found: update `last_ingested`, re-embed only chunks where content chang
 ## Substack Newsletters
 
 **Entry point**: user adds a Substack handle (e.g. `lenny`) → stored as a source subscription.
-**Trigger**: daily cron at 02:00 (before digest runs at 06:00).
+**Trigger**: daily cron at 08:00 UTC (runs alongside digest at 10:00 CEST).
 
 ### RSS Fetch
 ```
