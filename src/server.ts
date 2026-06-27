@@ -214,6 +214,14 @@ export default {
               });
               const matched = (chunks ?? []) as { chunk_id: string; source_id: string; title: string; author: string | null; chapter_title: string | null; content: string; similarity: number; url: string | null }[];
 
+              // Discovery: find and ingest external resources when coverage is thin
+              let discoveredResources: { url: string; title: string; sourceType: string; ingested: boolean }[] = [];
+              if (matched.length < 2) {
+                const { discoverAndIngest } = await import("./lib/discovery");
+                discoveredResources = await discoverAndIngest(supabase, anthropic, p.user_id, searchQuery);
+              }
+              if (matched.length === 0 && discoveredResources.filter((r) => r.ingested).length === 0) continue;
+
               let synthesis = `My sources on "${displayTheme}" are thinner than I'd like.`;
               if (matched.length > 0) {
                 const passages = matched.map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 400)}`).join("\n\n");
@@ -234,7 +242,7 @@ export default {
                 .slice(0, 3)
                 .map(c => ({ title: c.title, author: c.author, chapterTitle: null, url: c.url ?? null }));
               citationCount += citations.length;
-              sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion: null });
+              sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion: null, discoveredResources: discoveredResources.length > 0 ? discoveredResources : undefined });
 
               await supabase.from("digest_themes").insert({ digest_run_id: digestRunId, user_id: p.user_id, theme_text: displayTheme, theme_type: "topic", synthesis });
             }

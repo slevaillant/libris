@@ -57,6 +57,7 @@ export type DigestSection = {
   synthesis: string;
   citations: { title: string; author: string | null; chapterTitle: string | null; url: string | null }[];
   readingSuggestion: { title: string; chapter: string } | null;
+  discoveredResources?: { url: string; title: string; sourceType: string; ingested: boolean }[];
 };
 
 export function buildDigestEmail(
@@ -99,6 +100,18 @@ export function buildDigestEmail(
           ? `<p style="font-size:12px;color:#4f46e5;margin:0;">
           → Suggested re-read: <strong>${s.readingSuggestion.title}</strong>${s.readingSuggestion.chapter ? `, ${s.readingSuggestion.chapter}` : ""}
         </p>`
+          : ""
+      }
+      ${
+        s.discoveredResources?.length
+          ? `<div style="margin-top:14px;padding:12px 14px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+              <p style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 8px;">📥 Added to your library</p>
+              ${s.discoveredResources.map((r) => {
+                const icon = r.sourceType === "youtube" ? "▶" : r.sourceType === "github" ? "⚙" : "🔗";
+                const badge = r.ingested ? "" : ` <span style="color:#9ca3af;font-size:10px;">(recommended)</span>`;
+                return `<p style="font-size:12px;color:#374151;margin:4px 0;">${icon} <a href="${r.url}" style="color:#4f46e5;text-decoration:none;">${r.title}</a>${badge}</p>`;
+              }).join("")}
+            </div>`
           : ""
       }
     </div>`,

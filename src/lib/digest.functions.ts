@@ -241,7 +241,13 @@ async function runDigestPipeline(
     const { text: searchQuery, type: themeType, label: displayTheme } = themeEntries[i];
     const chunks = chunksByTheme[i];
 
-    if (chunks.length === 0 && themeType === "topic") continue; // skip thin topic matches
+    // Discovery: when library coverage is thin, find and ingest external resources
+    let discoveredResources: { url: string; title: string; sourceType: string; ingested: boolean }[] = [];
+    if (chunks.length < 2 && themeType === "topic") {
+      const { discoverAndIngest } = await import("./discovery");
+      discoveredResources = await discoverAndIngest(supabase as Parameters<typeof searchTheme>[0], anthropic, userId, searchQuery);
+      if (chunks.length === 0 && discoveredResources.filter((r) => r.ingested).length === 0) continue;
+    }
 
     const { synthesis, readingSuggestion } = await synthesiseSection(anthropic, displayName, librarianName, searchQuery, chunks);
 
@@ -258,7 +264,7 @@ async function runDigestPipeline(
       .map((c) => ({ title: c.title, author: c.author, chapterTitle: null, url: c.url ?? null }));
     citationCount += citations.length;
 
-    sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion });
+    sections.push({ theme: displayTheme, synthesis, citations, readingSuggestion, discoveredResources: discoveredResources.length > 0 ? discoveredResources : undefined });
 
     // Store theme in DB (anonymised — no transcript content)
     await supabase.from("digest_themes").insert({
