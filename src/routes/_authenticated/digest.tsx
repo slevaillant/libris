@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   Loader2,
   Mail,
-  Clock,
   Play,
   ChevronDown,
   ChevronRight,
@@ -43,7 +42,6 @@ function DigestSettings() {
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [email, setEmail] = useState("");
-  const [time, setTime] = useState("06:00");
   const [topicsMd, setTopicsMd] = useState<string | null>(null);
   const [topicsUpdatedAt, setTopicsUpdatedAt] = useState<string | null>(null);
 
@@ -53,7 +51,6 @@ function DigestSettings() {
         if (!p) return;
         setEnabled(p.digestEnabled);
         setEmail(p.digestEmail ?? "");
-        setTime(p.digestTime ?? "06:00");
         setTopicsMd(p.topicsMd ?? null);
         setTopicsUpdatedAt(p.topicsUpdatedAt ?? null);
       })
@@ -104,9 +101,9 @@ function DigestSettings() {
         enabled ? "border-emerald-500/40 bg-emerald-500/10" : "border-border bg-muted/30",
       )}>
         <div>
-          <p className="text-xs font-medium">Daily digest</p>
+          <p className="text-xs font-medium">Weekly deep-dive</p>
           <p className="text-[10px] mt-0.5 text-muted-foreground">
-            {enabled ? `Sent every morning at ${time}` : "No email will be sent"}
+            {enabled ? "Sent every Friday at 12:00 (Paris time)" : "No email will be sent"}
           </p>
         </div>
         <button
@@ -145,22 +142,6 @@ function DigestSettings() {
             </p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="digest-time" className="flex items-center gap-1.5">
-              <Clock className="h-3 w-3" />
-              Delivery time
-            </Label>
-            <Input
-              id="digest-time"
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              className="w-28"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              Your local time. Digest runs after your last meeting of the previous day.
-            </p>
-          </div>
         </>
       )}
 
@@ -461,7 +442,7 @@ function DigestPage() {
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center border-b border-border px-5">
-        <h1 className="text-xs font-medium">Daily Digest</h1>
+        <h1 className="text-xs font-medium">Weekly Digest</h1>
       </header>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-8 max-w-xl">

@@ -26,7 +26,7 @@ libris/
       index.tsx                  ← Dashboard
       chat.tsx                   ← On-demand nudge interface
       library.tsx                ← Book + source browser
-      digest.tsx                 ← Daily digest settings
+      digest.tsx                 ← Weekly digest settings
       import.tsx                 ← Manual import (URL, PDF, book)
       book.$id.tsx               ← Book detail — chapters, highlights, import from screenshot
       index-books.tsx            ← Bounty indexing flow (from Libris)
@@ -99,7 +99,7 @@ OrchestratorAgent (Durable Object, opus-4-7)
  │ routes to
  ├─ RAGAgent (haiku → sonnet, stateless)
  ├─ IngestionAgent (haiku, queue-fed Workflow)
- └─ DigestAgent (haiku + opus, scheduled 06:00)
+ └─ Weekly digest (opus, Friday 12:00 Europe/Paris — src/lib/weekly-digest.ts)
 ```
 
 ## Coding Conventions

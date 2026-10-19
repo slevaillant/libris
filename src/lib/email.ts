@@ -66,8 +66,9 @@ export function buildDigestEmail(
   date: string,
   sections: DigestSection[],
   quizUrl?: string,
+  { notice }: { notice?: string } = {},
 ): { subject: string; html: string; text: string } {
-  const subject = `Your library for today — ${date}`;
+  const subject = `Friday deep-dive — ${date}`;
 
   const sectionHtml = sections
     .map(
@@ -147,12 +148,13 @@ export function buildDigestEmail(
   <html>
   <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#fff;color:#111827;">
     <h1 style="font-size:16px;font-weight:600;margin:0 0 4px;">${librarianName}</h1>
-    <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Good morning, ${displayName}.</p>
+    <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">${displayName}, here is what your library says about this week's critical topics — for your Friday afternoon.</p>
     <p style="font-size:13px;color:#6b7280;margin:0 0 24px;">${date}</p>
+    ${notice ? `<p style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin:0 0 24px;">${notice}</p>` : ""}
     ${sectionHtml}
     ${
       sections.length === 0
-        ? `<p style="font-size:13px;color:#6b7280;">Nothing matched your library today. Consider adding more sources on the topics you discussed.</p>`
+        ? `<p style="font-size:13px;color:#6b7280;">Nothing matched your library this week. Consider adding more sources on the topics you discussed.</p>`
         : ""
     }
     ${sourcesHtml}
@@ -169,7 +171,7 @@ export function buildDigestEmail(
   </body>
   </html>`;
 
-  const text = sections
+  const text = (notice ? `${notice}\n\n` : "") + sections
     .map((s) => `${s.theme.toUpperCase()}\n\n${s.synthesis}\n\n${s.citations.map((c) => `• ${c.title}${c.chapterTitle ? ` — ${c.chapterTitle}` : ""}${c.url ? `\n  ${c.url}` : ""}`).join("\n")}\n`)
     .join("\n---\n\n");
 

@@ -36,45 +36,65 @@ export type DigestThemeRow = {
 
 // ─── Topics parser ───────────────────────────────────────────────────────────
 
+export type TopicEntry = { title: string; query: string };
+
+// Query labels, in order of preference. "Libris query" is written by the weekly
+// routine; the others are older formats kept for compatibility.
+const QUERY_LABELS = [
+  /\*\*Libris query\s*:\*\*\s*(.+)/i,
+  /\*\*Question [àa]\s+explorer\s*:\*\*\s*(.+)/i,
+  /\*\*Question to explore\s*:\*\*\s*(.+)/i,
+];
+
 /**
- * Extract active (unchecked) topics from TOPICS.md.
+ * Extract active (unchecked) topics from the "To explore" section of TOPICS.md
+ * (between TOPICS_START and TOPICS_DONE — the routine's weekly selection).
  * Supports two formats:
  *   New: - [ ] date | **Bold Title** | _source_
- *        > **Question à explorer :** <question text>
+ *        > **Libris query:** <question text>   (or "Question à explorer" / "Question to explore")
  *   Legacy: - [ ] date | #hashtag-title | _source_
  *
- * Returns the "Question à explorer" text when present (better for RAG embedding),
- * otherwise the title. Returns at most 8 topics.
+ * `query` is the question text when present (better for RAG embedding), otherwise the title.
+ * Returns at most 8 topics.
  */
-export function parseTopicsFromMd(md: string): string[] {
+export function parseTopicEntriesFromMd(md: string): TopicEntry[] {
   const section = md.match(/<!-- TOPICS_START -->([\s\S]*?)(?:<!-- TOPICS_DONE -->|$)/)?.[1] ?? md;
   const lines = section.split("\n");
-  const topics: string[] = [];
+  const entries: TopicEntry[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // New format: - [ ] date | **Title** | _source_
-    const boldMatch = line.match(/^- \[ \] .+\| \*\*([^*]+)\*\*/);
+    const boldMatch = line.match(/^- \[ \] .+?\| \*\*([^*]+)\*\*/);
     if (boldMatch) {
       const title = boldMatch[1].trim();
-      // Look ahead up to 5 lines for "Question à explorer"
+      // Scan the topic's block (until the next checklist item) for a query line
+      const block: string[] = [];
+      for (let j = i + 1; j < lines.length && !lines[j].startsWith("- ["); j++) block.push(lines[j]);
       let query = title;
-      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-        if (lines[j].startsWith("- [")) break;
-        const qMatch = lines[j].match(/Question [àa]\s+explorer\s*:\*\*\s*(.+)/i);
-        if (qMatch) { query = qMatch[1].trim(); break; }
+      for (const label of QUERY_LABELS) {
+        const hit = block.map((l) => l.match(label)).find((m) => m);
+        if (hit) { query = hit[1].trim(); break; }
       }
-      topics.push(query);
+      entries.push({ title, query });
       continue;
     }
 
     // Legacy format: - [ ] date | #hashtag-title | _source_
     const hashMatch = line.match(/^- \[ \] .+\| (#[\wÀ-ž-]+)/);
-    if (hashMatch) topics.push(hashMatch[1].slice(1).replace(/-/g, " "));
+    if (hashMatch) {
+      const title = hashMatch[1].slice(1).replace(/-/g, " ");
+      entries.push({ title, query: title });
+    }
   }
 
-  return topics.slice(0, 8);
+  return entries.slice(0, 8);
+}
+
+/** RAG search queries for active topics. */
+export function parseTopicsFromMd(md: string): string[] {
+  return parseTopicEntriesFromMd(md).map((e) => e.query);
 }
 
 /**
@@ -82,15 +102,7 @@ export function parseTopicsFromMd(md: string): string[] {
  * Returns bold titles or cleaned hashtags — NOT the full question text.
  */
 export function parseTopicTitlesFromMd(md: string): string[] {
-  const section = md.match(/<!-- TOPICS_START -->([\s\S]*?)(?:<!-- TOPICS_DONE -->|$)/)?.[1] ?? md;
-  const titles: string[] = [];
-  for (const line of section.split("\n")) {
-    const boldMatch = line.match(/^- \[ \] .+\| \*\*([^*]+)\*\*/);
-    if (boldMatch) { titles.push(boldMatch[1].trim()); continue; }
-    const hashMatch = line.match(/^- \[ \] .+\| (#[\wÀ-ž-]+)/);
-    if (hashMatch) titles.push(hashMatch[1].slice(1).replace(/-/g, " "));
-  }
-  return titles.slice(0, 8);
+  return parseTopicEntriesFromMd(md).map((e) => e.title);
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────

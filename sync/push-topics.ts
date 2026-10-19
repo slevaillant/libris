@@ -31,7 +31,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 
 const DEFAULT_PATH =
   process.env.TOPICS_FILE_PATH ??
-  path.join(os.homedir(), "Documents/chief-of-staff/seb-obsidian/TOPICS.md");
+  path.join(os.homedir(), "Documents/Obsidian Vault/TOPICS.md");
 const topicsPath = process.argv[2] ?? DEFAULT_PATH;
 
 if (!fs.existsSync(topicsPath)) {
