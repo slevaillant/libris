@@ -7,6 +7,8 @@ dist
 .DS_Store
 
 # Personal data — never commit actual topics, notes, or local configs
-TOPICS.md
+TOPICS*.md
+!sync/TOPICS.example.md
+.private-patterns
 sync/*.local.ts
 sync/.env
