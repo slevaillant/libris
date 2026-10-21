@@ -130,16 +130,21 @@ ANTHROPIC_API_KEY          # Claude (all models)
 GEMINI_API_KEY             # gemini-embedding-001
 SUPABASE_URL               # Supabase project URL
 SUPABASE_PUBLISHABLE_KEY   # Supabase anon key
-SUPABASE_SERVICE_KEY       # Local only — sync scripts, never deployed
+SUPABASE_SERVICE_KEY       # Worker secret (cron jobs) + local .env.local (sync scripts) — never in the client
+RESEND_API_KEY             # Digest email delivery
+APP_URL                    # Public app URL used in email links (https://seblevaillant.com)
 GITHUB_TOKEN               # GitHub API (repo ingestion)
 ```
+
+Build-time variables (Cloudflare Workers Builds): `NODE_VERSION=24`, `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_PUBLISHABLE_KEY`. Pushing to `main` deploys via Workers Builds.
 
 ## Development Commands
 
 ```bash
 npm run dev          # Start dev server (http://localhost:3000)
 npm run build        # Build for Cloudflare Workers
-npx wrangler deploy  # Deploy to production
+npx wrangler deploy  # Manual deploy (normally: push to main → Workers Builds)
 npm run lint         # ESLint check
 npm run test         # Vitest unit tests
 ```
