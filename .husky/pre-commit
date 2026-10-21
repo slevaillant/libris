@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Rule 0: never publish private work data (topics, meeting notes) to this public repo
+sh scripts/check-private-data.sh || exit 1
+
 # Rule 3: tests must pass before every commit
 npm run test
 

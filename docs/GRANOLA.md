@@ -17,7 +17,35 @@ that drives proactive knowledge surfacing.
 
 ---
 
-## Daily Digest Pipeline (Scheduled — 10:00 CEST / 08:00 UTC)
+## Current Pipeline — Weekly Friday Deep-Dive (12:00 Europe/Paris)
+
+The Granola MCP is not available on the work account, so meeting analysis happens outside Libris:
+
+```
+Weekly routine (ChatGPT + Granola API, Slack)
+   │  writes the week's selection of critical topics
+   ▼
+~/Documents/Obsidian Vault/TOPICS.md      ← "To Explore" section, one "**Libris query:**" per topic
+   │  LaunchAgent com.libris.push-topics (sync/install-topics-sync.sh)
+   │  runs sync/push-topics.ts on every file change + Friday 11:30 safety net
+   ▼
+user_profiles.topics_md
+   │  Cloudflare cron "0 10 * * FRI" + "0 11 * * FRI" (UTC);
+   │  isWeeklyDigestSlot() keeps only the run at 12:00 Paris (CEST/CET)
+   ▼
+src/lib/weekly-digest.ts → RAG per topic → discovery when coverage is thin → Opus synthesis
+   ▼
+One email per week ("Friday deep-dive — Week N"), idempotent per run date
+```
+
+- Only topics between `<!-- TOPICS_START -->` and `<!-- TOPICS_DONE -->` are used (max 8);
+  the backlog section is ignored.
+- If `topics_updated_at` is 6+ days old, the email carries a heads-up that the sync is broken.
+- Manual run: `npx tsx sync/trigger-digest.ts [--force]`.
+
+---
+
+## Original Design — Daily Digest Pipeline (superseded)
 
 ```
 10:00 — Digest Workflow starts

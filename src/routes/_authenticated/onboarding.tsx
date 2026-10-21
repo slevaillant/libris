@@ -125,9 +125,9 @@ function Onboarding() {
           <div className="pt-2 space-y-2">
             <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
               <div>
-                <p className="text-xs font-medium">Morning digest</p>
+                <p className="text-xs font-medium">Weekly deep-dive</p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Daily 6am email linking yesterday's meetings to your library.
+                  Friday 12:00 email linking the week's critical topics to your library.
                 </p>
               </div>
               <button

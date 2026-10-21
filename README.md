@@ -65,6 +65,17 @@ pgvector only for semantic cache and knowledge base retrieval.
 
 ---
 
+## Privacy by Design
+
+This repository is public; the knowledge it works on is not.
+
+- **Weekly topics** (the critical work challenges extracted from meetings) live only in Supabase
+  (`user_profiles.topics_md`), pushed from a local `TOPICS.md` by `sync/push-topics.ts`.
+  `TOPICS*.md` is gitignored — only `sync/TOPICS.example.md` is versioned.
+- **Meeting transcripts** never reach Libris: an external routine turns them into anonymised topics.
+- **A pre-commit guard** (`scripts/check-private-data.sh`) blocks commits containing TOPICS files,
+  meeting-note or chat links, or any term listed in the local, gitignored `.private-patterns`.
+
 ## Documentation
 
 | File | Contents |

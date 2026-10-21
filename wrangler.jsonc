@@ -8,6 +8,7 @@
     "directory": "dist/client"
   },
   "triggers": {
-    "crons": ["0 8 * * *", "0 8 * * SUN"]
+    // Daily Substack sync · Sunday pattern analysis · Friday 12:00 Paris digest (10:00 UTC in CEST, 11:00 UTC in CET)
+    "crons": ["0 8 * * *", "0 8 * * SUN", "0 10 * * FRI", "0 11 * * FRI"]
   }
 }
