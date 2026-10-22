@@ -33,11 +33,17 @@ which is why this went unnoticed.
 
 ### Next up — in order
 
-1. [ ] **Backfill embeddings**: a throttled, resumable script embeds every chunk where `embedding is null`
-2. [ ] **Fix ongoing embedding failures**: find the root cause (Gemini quota or rate limit), add retry with backoff,
-       and flag sources with missing embeddings instead of failing silently
-3. [ ] Re-run or clean up the 20 sources stuck in `processing` and the 5 in `failed`
-4. [ ] Check that the discovery model (`gemini-2.0-flash` in `src/lib/discovery.ts`) is still served
+1. [ ] **Backfill embeddings**: `sync/backfill-embeddings.ts` is ready (throttled, resumable, stops on daily
+       quota). Run it until "Still missing: 0"
+2. [x] **Fix ongoing embedding failures**: `embedBatch` dropped a whole batch on any HTTP error (e.g. 429) with
+       no retry and no log. It now retries 429/5xx with backoff (honouring Retry-After) and logs the status
+3. [x] Stuck Substack sources (20): the daily cron was interrupted mid-ingest, and the duplicate-URL check then
+       blocked the article forever. The cron now releases `processing` sources older than 2h and indexes at
+       most 5 new articles per run. Probable cause: Workers execution limits; confirm in Observability logs
+   [ ] Failed ebooks (5): 4 hit NUL characters ("unsupported Unicode escape sequence"), now stripped at
+       ingestion. Re-import those 4 files. The 5th (`reading 'length'`) needs investigation
+4. [x] Discovery model moved from `gemini-2.0-flash` to `gemini-2.5-flash` (already used for YouTube), and
+       failures are now logged. Confirm it works once `GEMINI_API_KEY` is available locally
 5. [ ] Verify the first weekly email (Friday 2026-10-23, 12:00 Paris)
 6. [ ] Work through the open **Verify** items in Phases 3–9 (retrieval quality checks)
 7. [ ] Phase 11 — Connection Engine
