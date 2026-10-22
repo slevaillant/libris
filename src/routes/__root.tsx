@@ -19,7 +19,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Libris" },
       { name: "description", content: "Surface what you know, when you need it." },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      // Emoji favicon so the Libris tab is easy to spot among open tabs
+      {
+        rel: "icon",
+        href: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>",
+      },
+    ],
   }),
   shellComponent: RootShell,
   component: RootComponent,
