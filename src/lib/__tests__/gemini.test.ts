@@ -34,6 +34,18 @@ describe("embedBatch — retries", () => {
     expect(onBatchError).toHaveBeenCalledWith(429, "Quota exceeded per day");
   });
 
+  it("splits a rate-limited batch of 100 into smaller requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const n = JSON.parse(String((init as RequestInit).body)).requests.length as number;
+      return n > 25 ? rateLimited() : ok(n);
+    });
+    const result = await embedBatch(Array.from({ length: 100 }, (_, i) => `t${i}`));
+    expect(result).toHaveLength(100);
+    expect(result.every((v) => v !== null)).toBe(true);
+    // 100 → 2×50 → 4×25: 1 + 2 refused calls, then 4 accepted
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
   it("does not retry client errors", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bad", { status: 400 }));
     expect(await embedBatch(["a"])).toEqual([null]);
