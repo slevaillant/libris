@@ -519,6 +519,8 @@ export const checkDuplicate = createServerFn({ method: "POST" })
         .select("id, title")
         .eq("user_id", userId)
         .eq("isbn", data.isbn)
+        .neq("ingest_status", "failed") // a failed import must not block a retry
+        .limit(1)
         .maybeSingle();
       if (row) return { exists: true, sourceId: row.id as string, title: row.title as string };
     }
@@ -528,6 +530,7 @@ export const checkDuplicate = createServerFn({ method: "POST" })
       .from("sources")
       .select("id, title")
       .eq("user_id", userId)
+      .neq("ingest_status", "failed")
       .ilike("title", data.title);
     if (data.author) q.ilike("author", data.author);
     const { data: rows } = await q.limit(1);
@@ -566,6 +569,15 @@ export const addDigitalBook = createServerFn({ method: "POST" })
       .map((c) => ({ ...c, content: stripNul(c.content), chapterTitle: c.chapterTitle ? stripNul(c.chapterTitle) : c.chapterTitle }))
       .filter((c) => c.content.trim().length > 0);
     if (chunks.length === 0) throw new Error("No readable text found in this file");
+
+    // Replace any earlier failed import of the same book
+    await supabase
+      .from("sources")
+      .delete()
+      .eq("user_id", userId)
+      .eq("source_type", "ebook")
+      .eq("ingest_status", "failed")
+      .ilike("title", stripNul(data.title));
 
     // 1. Create source
     const { data: source, error: sourceErr } = await supabase
