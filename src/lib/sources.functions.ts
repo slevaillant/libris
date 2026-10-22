@@ -95,6 +95,8 @@ export const getSource = createServerFn({ method: "POST" })
         ingestError: source.ingest_error as string | null,
         isRead: source.is_read as boolean,
         tags: source.tags as string[],
+        tocSource: (source.toc_source as string | null) ?? null,
+        tocSourceUrl: (source.toc_source_url as string | null) ?? null,
         createdAt: source.created_at,
       },
       chunks: (chunks ?? []).map(

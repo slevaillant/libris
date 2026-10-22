@@ -1,4 +1,4 @@
-import * as pdfjsLib from "pdfjs-dist";
+type PdfjsLib = typeof import("pdfjs-dist");
 
 export type PdfChunk = {
   content: string;
@@ -18,13 +18,21 @@ function estimateTokens(text: string): number {
 }
 
 export async function extractPdf(file: File): Promise<PdfExtractResult> {
+  const pdfjsLib = await import("pdfjs-dist");
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.mjs",
     import.meta.url,
   ).toString();
 
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+  return extractPdfData(new Uint8Array(await file.arrayBuffer()), pdfjsLib);
+}
+
+/**
+ * Same extraction from raw bytes. Outside the browser, pass the Node build:
+ * `await import("pdfjs-dist/legacy/build/pdf.mjs")` (see sync/import-pdf.ts).
+ */
+export async function extractPdfData(data: Uint8Array, pdfjsLib: PdfjsLib): Promise<PdfExtractResult> {
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
 
   // Extract document metadata
   const metaResult = await pdf.getMetadata().catch(() => null);

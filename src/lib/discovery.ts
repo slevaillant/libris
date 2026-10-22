@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
+import { insertChunks } from "./chunks";
 
 export type DiscoveredResource = {
   url: string;
@@ -201,7 +202,8 @@ export async function ingestDiscoveredUrl(
     const { embedBatch } = await import("./gemini");
     const embeddings = await embedBatch(rawChunks.map((c) => c.content)).catch(() => rawChunks.map(() => null));
 
-    await supabase.from("chunks").insert(
+    await insertChunks(
+      supabase,
       rawChunks.map((c, i) => ({
         source_id: source.id,
         user_id: userId,

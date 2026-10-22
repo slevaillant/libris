@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { embedBatch } from "@/lib/gemini";
+import { insertChunks } from "@/lib/chunks";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ async function ingestChunks(
     token_count: Math.ceil(c.content.length / 4),
   }));
 
-  await supabase.from("chunks").insert(rows);
+  await insertChunks(supabase, rows);
 }
 
 // ─── Preview Substack ─────────────────────────────────────────────────────────

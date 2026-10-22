@@ -158,8 +158,8 @@ function IndexBooksPage() {
     try {
       let chapters: string[] = [];
       try {
-        const suggested = await suggestFn({ data: { title: preview.title, author: preview.author } });
-        chapters = suggested as string[];
+        const suggested = await suggestFn({ data: { title: preview.title, author: preview.author, isbn: preview.isbn ?? undefined } });
+        chapters = suggested.chapters;
       } catch { /* non-fatal */ }
 
       const { bookCount: newCount } = await addBookFn({
