@@ -50,7 +50,7 @@ create table public.user_profiles (
   communication_style  text,       -- "Direct, concise, no fluff"
   current_books        text,       -- "High Output Management Ch.6, started 2 weeks ago"
   timezone             text        not null default 'Europe/Paris',
-  digest_time          time        not null default '06:00',
+  digest_time          time        not null default '06:00', -- unused since 2026-10: digest is sent Fridays 12:00 Europe/Paris
   digest_enabled       boolean     not null default true,
   digest_email         text,
   semantic_cache_threshold float   not null default 0.92, -- lower = more cache hits
@@ -250,7 +250,7 @@ create policy "own citations" on public.nudge_citations
 ---
 
 ### `digest_runs`
-One row per daily digest generated.
+One row per digest run (`run_date` = Paris date). Daily until 2026-09, weekly (Fridays) since 2026-10.
 
 ```sql
 create table public.digest_runs (

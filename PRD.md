@@ -25,7 +25,7 @@ This is not a search problem. It is a **retrieval at the right moment** problem.
 
 A multi-agent knowledge system that:
 1. **Indexes** all three source types with AI-generated structure
-2. **Listens** to your daily life via Granola meeting transcripts
+2. **Listens** to your working week via topics extracted from Granola meetings (outside Libris, anonymised)
 3. **Surfaces** the right knowledge at the right moment — proactively and on demand
 4. **Cites** every answer back to a specific source, chapter, or passage — no hallucination by design
 
@@ -85,12 +85,14 @@ Example output:
 These three converge on one idea: [synthesis paragraph]
 ```
 
-### 4. Proactive Daily Digest
-Every morning, an email or notification summarising:
-- Yesterday's Granola meeting themes
-- What your knowledge base says about those themes
-- Specific chapters or articles to (re)read today
-- Cross-source connections you haven't seen before
+### 4. Proactive Weekly Digest — "Friday deep-dive"
+One email a week, **Friday 12:00 (Europe/Paris)**, so Friday afternoon can be spent digging into the week.
+It was daily until October 2026; one email a day was more than the persona has time to read.
+- The week's critical work topics (curated by an external routine from Granola meetings + Slack)
+- What your knowledge base says about each topic, with citations
+- What to read first this afternoon, and why
+- New external resources when the library's coverage is thin (discovery)
+- Cross-source connections you haven't seen before (with the Connection Engine)
 
 ### 5. Connection Engine
 Finds non-obvious links across sources:
@@ -118,12 +120,13 @@ Finds non-obvious links across sources:
 ### Performance
 - On-demand nudge response: <3 seconds end-to-end
 - Ingestion: non-blocking (queue-based, never fails the UI)
-- Daily digest: generated at 10:00 CEST (08:00 UTC)
+- Weekly digest: sent Fridays at 12:00 Europe/Paris (cron at 10:00 and 11:00 UTC, guarded for CEST/CET)
 
 ### Privacy & Security
 - Single-user first — all data scoped to `user_id` via Supabase RLS
 - No financial amounts, conversation content, or highlights logged to console
-- Service key never deployed — stays local only (sync scripts)
+- Service key only server-side: a Cloudflare secret (cron jobs) and local `.env.local` (sync scripts), never in the client
+- Public repo, private knowledge: real meeting topics live only in Supabase; a pre-commit guard blocks work data
 - API keys in Cloudflare secrets only
 
 ### Open-Source Readiness
@@ -149,7 +152,7 @@ Finds non-obvious links across sources:
 |---|---|
 | Nudge → relevant citation rate | >80% of queries return ≥1 citation |
 | On-demand response latency | <3s p95 |
-| Daily digest open rate | >60% |
+| Weekly digest open rate | >80% |
 | Books cited per week | Increasing week-over-week |
 | Sources indexed | 100% of curated Substack list within week 1 |
 
@@ -163,5 +166,5 @@ Finds non-obvious links across sources:
 | 2 — Books | Physical book indexing (bounty system) + e-book/PDF ingestion |
 | 3 — Web sources | Substack RSS + GitHub + web article ingestion |
 | 4 — Nudge chat | On-demand chat interface with citations |
-| 5 — Proactive digest | Granola integration + daily email |
+| 5 — Proactive digest | TOPICS.md pipeline (Granola via external routine) + weekly Friday email |
 | 6 — Connection engine | Cross-source synthesis + under-reference surfacing |

@@ -58,7 +58,7 @@ pgvector only for semantic cache and knowledge base retrieval.
 
 - **Universal ingestion**: physical books (bounty indexing), e-books, PDFs, Substack RSS, GitHub repos, web articles
 - **On-demand chat**: type a thought → Lumen (your personal librarian) searches your library and responds with citations
-- **Daily digest**: morning email connecting yesterday's Granola meeting themes to your library
+- **Weekly digest**: one Friday-noon email connecting the week's critical work topics to your library, so Friday afternoon is for reading
 - **Memory layer**: Lumen remembers past conversations, adapts to your preferences, finds patterns
 - **Bounty system**: invite others to physically scan your library, earn per book indexed
 - **Connection engine**: surfaces non-obvious links across sources
@@ -90,7 +90,7 @@ This repository is public; the knowledge it works on is not.
 | [`docs/AGENT_CONTRACTS.md`](docs/AGENT_CONTRACTS.md) | Agent inputs, outputs, tools, failure modes |
 | [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Full schema and pgvector RPC definitions |
 | [`docs/SOURCES.md`](docs/SOURCES.md) | Per-source ingestion strategy |
-| [`docs/GRANOLA.md`](docs/GRANOLA.md) | Granola integration and daily digest pipeline |
+| [`docs/GRANOLA.md`](docs/GRANOLA.md) | Granola topics pipeline and weekly digest |
 | [`docs/PROMPTS.md`](docs/PROMPTS.md) | Prompt templates with caching strategy |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Auth, RLS, secrets, logging rules |
 
@@ -98,11 +98,13 @@ This repository is public; the knowledge it works on is not.
 
 ## Status
 
-Currently in pre-development — documentation and architecture phase complete.
-See [`PLAN.md`](PLAN.md) for the implementation roadmap.
+**Live in production** (single user): phases 0–10 are shipped, including ingestion of every
+source type, cited chat, the memory layer, the weekly digest and the bounty system.
+Next: library health (embedding backfill), Connection Engine, evals.
+See the status section at the top of [`PLAN.md`](PLAN.md).
 
 ---
 
 ## License
 
-MIT — designed to be open-sourced once stable. See [`PLAN.md`](PLAN.md) Phase 12.
+MIT — designed to be open-sourced once stable. See [`PLAN.md`](PLAN.md) Phase 14.
