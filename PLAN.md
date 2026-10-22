@@ -18,7 +18,7 @@ sync was rebuilt for the new machine.
 |---|---|---|
 | Sources | 420 (148 ebooks, 224 Substack, 37 web, 6 GitHub, 5 physical) | Good breadth |
 | Ingest status | 395 complete · 20 stuck `processing` · 5 `failed` | Needs cleanup |
-| Chunks with an embedding | **3,134 / 20,211 (16%)** | 🔴 Blocks retrieval |
+| Chunks with an embedding | 3,134 / 20,211 (16%) → **20,211 / 20,211 (100%) after the 2026-10-22 backfill** | ✅ Fixed |
 | — June bulk import | 2,124 / 18,877 embedded | Bulk ebook import outran the embedding API |
 | — October | 486 / 789 embedded | Embedding failures are still happening |
 | Highlights | 19 | |
@@ -33,8 +33,12 @@ which is why this went unnoticed.
 
 ### Next up — in order
 
-1. [ ] **Backfill embeddings**: `sync/backfill-embeddings.ts` is ready (throttled, resumable, stops on daily
-       quota). Run it until "Still missing: 0"
+1. [x] **Backfill embeddings** (2026-10-22): 17,077 chunks embedded with `sync/backfill-embeddings.ts`, 0 missing.
+       Root cause: on the Gemini free tier, a batch of 100 chunks exceeded the per-minute token quota by
+       itself. Billing is now enabled on the Gemini project, and `embedBatch` splits rate-limited batches
+   [x] **Search scaled to the full library**: `match_chunks` scanned every row with `cosine_distance()` and timed
+       out once ~20k chunks were embedded. It now uses an HNSW index (`20261022000001_match_chunks_hnsw.sql`,
+       applied manually in the SQL editor). ~2s per query, network included
 2. [x] **Fix ongoing embedding failures**: `embedBatch` dropped a whole batch on any HTTP error (e.g. 429) with
        no retry and no log. It now retries 429/5xx with backoff (honouring Retry-After) and logs the status
 3. [x] Stuck Substack sources (20): the daily cron was interrupted mid-ingest, and the duplicate-URL check then
