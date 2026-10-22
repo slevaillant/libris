@@ -128,6 +128,9 @@ RULES:
 
 ### L2: DigestAgent (theme extraction phase — Haiku)
 
+> Not used in production: since the TOPICS.md pipeline, theme extraction happens in the external
+> weekly routine, which writes one `**Libris query:**` per topic. Kept as the reference design.
+
 ```
 You are the meeting theme extractor for Libris's daily digest.
 
@@ -206,20 +209,27 @@ Memory cache: [HIT/MISS]. [If HIT: "Cached response from [date]: [summary]"]
 Coverage quality: [strong/partial/thin]
 ```
 
-### L4: Daily digest
+### L4: Weekly digest (as implemented — `src/lib/weekly-digest.ts`)
+
+One Opus call per topic. The instruction block is cached:
 
 ```
-Yesterday's meeting themes (anonymised):
+You are [librarian_name], writing [display_name]'s weekly Friday deep-dive. They set Friday
+afternoon aside to dig into the critical work challenges of their week. Write one focused
+paragraph connecting this week's challenge to the library passages. End with what to read
+first this afternoon, and why.
+```
+*→ cache_control: { type: "ephemeral" }*
 
-PROBLEMS: [list]
-DECISIONS: [list]
-OPEN QUESTIONS: [list]
-TOPICS: [list]
+```
+Challenge: "[topic title]"
 
-Retrieved knowledge base passages:
-[chunks grouped by theme]
+Question: "[Libris query]"
 
-[user.display_name]'s library coverage for these themes: [strong/partial/thin]
+Passages:
+[1] [title] — [author]
+[first 400 chars of chunk]
+...
 ```
 
 ---

@@ -3,6 +3,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { embedBatch } from "@/lib/gemini";
+import { stripNul } from "@/lib/utils";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -561,6 +562,10 @@ export const addDigitalBook = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const chunks = data.chunks
+      .map((c) => ({ ...c, content: stripNul(c.content), chapterTitle: c.chapterTitle ? stripNul(c.chapterTitle) : c.chapterTitle }))
+      .filter((c) => c.content.trim().length > 0);
+    if (chunks.length === 0) throw new Error("No readable text found in this file");
 
     // 1. Create source
     const { data: source, error: sourceErr } = await supabase
@@ -568,8 +573,8 @@ export const addDigitalBook = createServerFn({ method: "POST" })
       .insert({
         user_id: userId,
         source_type: "ebook",
-        title: data.title,
-        author: data.author ?? null,
+        title: stripNul(data.title),
+        author: data.author ? stripNul(data.author) : null,
         isbn: data.isbn ?? null,
         cover_url: data.coverUrl ?? null,
         description: data.description ?? null,
@@ -587,14 +592,14 @@ export const addDigitalBook = createServerFn({ method: "POST" })
       const BATCH = 100;
       const allEmbeddings: (number[] | null)[] = [];
 
-      for (let i = 0; i < data.chunks.length; i += BATCH) {
-        const batch = data.chunks.slice(i, i + BATCH).map((c) => c.content);
+      for (let i = 0; i < chunks.length; i += BATCH) {
+        const batch = chunks.slice(i, i + BATCH).map((c) => c.content);
         const embeddings = await embedBatch(batch).catch(() => batch.map(() => null));
         allEmbeddings.push(...embeddings);
       }
 
       // 3. Insert chunks
-      const chunkRows = data.chunks.map((chunk, i) => ({
+      const chunkRows = chunks.map((chunk, i) => ({
         source_id: source.id,
         user_id: userId,
         chunk_index: i,
@@ -614,7 +619,7 @@ export const addDigitalBook = createServerFn({ method: "POST" })
         .from("sources")
         .update({
           ingest_status: "complete",
-          total_chunks: data.chunks.length,
+          total_chunks: chunks.length,
           last_ingested: new Date().toISOString(),
         })
         .eq("id", source.id);

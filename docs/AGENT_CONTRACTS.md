@@ -15,7 +15,7 @@ OrchestratorAgent   (claude-opus-4-7)    — routes, synthesises, holds session 
       ├── IngestionAgent   (claude-haiku-4-5)   — document processing pipeline
       ├── ClassifierAgent  (claude-haiku-4-5)   — document type + metadata extraction
       ├── MemoryAgent      (claude-haiku-4-5)   — memory read/write/summarisation
-      └── DigestAgent      (claude-opus-4-7)    — Granola analysis + daily synthesis
+      └── DigestAgent      (claude-opus-4-7)    — weekly synthesis of TOPICS.md topics (see §6)
 ```
 
 ---
@@ -320,8 +320,14 @@ Input: { userId: string }
 
 ## 6. DigestAgent
 
-**File**: `src/agents/digest.agent.ts`
-**Runtime**: Cloudflare Workers scheduled task (runs at 08:00 UTC = 10:00 CEST)
+> **As implemented (2026-10)**: `src/lib/weekly-digest.ts`, called from the `scheduled` handler in
+> `src/server.ts` on Fridays at 12:00 Europe/Paris. Topics come from `user_profiles.topics_md`
+> (TOPICS.md written by an external routine), not from Granola MCP; there is no theme-extraction
+> step inside Libris. Tools actually used: `match_chunks`, discovery when coverage is thin, Opus
+> synthesis, Resend email, `digest_runs` / `digest_themes`. The contract below is the original design.
+
+**File**: `src/agents/digest.agent.ts` (original design — not built)
+**Runtime**: Cloudflare Workers scheduled task (original design: daily at 08:00 UTC)
 **Model**: `claude-haiku-4-5` (theme extraction) + `claude-opus-4-7` (synthesis)
 **Responsibility**: Pulls yesterday's Granola meetings, extracts themes, searches
 knowledge base, synthesises a morning digest email.

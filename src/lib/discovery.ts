@@ -20,7 +20,7 @@ export async function discoverResourcesViaGemini(
   geminiApiKey: string,
 ): Promise<{ url: string; title: string }[]> {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,7 +37,10 @@ Avoid marketing pages, paywalled content, or generic overviews.`,
     },
   ).catch(() => null);
 
-  if (!res?.ok) return [];
+  if (!res?.ok) {
+    console.error(`[discovery] Gemini search failed: ${res ? `HTTP ${res.status}` : "network error"}`);
+    return [];
+  }
 
   const data = await res.json() as {
     candidates?: Array<{

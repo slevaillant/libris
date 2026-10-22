@@ -5,6 +5,53 @@ Never start a phase until the previous one is fully working in production.
 
 ---
 
+## Status — 2026-10-22
+
+Phases 0–10 are live in production at https://seblevaillant.com. The project was revived in
+October 2026 after a 3-month pause: the digest moved from daily to **weekly (Friday 12:00 Paris)**,
+deployment moved to **Cloudflare Workers Builds** (push to `main` deploys), and the TOPICS.md
+sync was rebuilt for the new machine.
+
+### Library health (measured 2026-10-22)
+
+| Signal | Value | Read |
+|---|---|---|
+| Sources | 420 (148 ebooks, 224 Substack, 37 web, 6 GitHub, 5 physical) | Good breadth |
+| Ingest status | 395 complete · 20 stuck `processing` · 5 `failed` | Needs cleanup |
+| Chunks with an embedding | **3,134 / 20,211 (16%)** | 🔴 Blocks retrieval |
+| — June bulk import | 2,124 / 18,877 embedded | Bulk ebook import outran the embedding API |
+| — October | 486 / 789 embedded | Embedding failures are still happening |
+| Highlights | 19 | |
+| Chat usage | 15 nudges, last one on 2026-06-27 · 2 rated | Not yet a habit |
+| Memories | 6 episodic · 5 preference · 10 cache · 0 pattern | Pattern cron needs ≥5 nudges / 30 days |
+| Digest | 162 runs (daily, until 2026-09-21) · weekly from 2026-10-23 | |
+| Bounty | 0 invites | Built, never used |
+
+Chunks without an embedding are invisible to `match_chunks`, so the chat and the digest only see
+about 16% of the library. Embedding failures are silent by design (`.catch(() => undefined)`),
+which is why this went unnoticed.
+
+### Next up — in order
+
+1. [ ] **Backfill embeddings**: `sync/backfill-embeddings.ts` is ready (throttled, resumable, stops on daily
+       quota). Run it until "Still missing: 0"
+2. [x] **Fix ongoing embedding failures**: `embedBatch` dropped a whole batch on any HTTP error (e.g. 429) with
+       no retry and no log. It now retries 429/5xx with backoff (honouring Retry-After) and logs the status
+3. [x] Stuck Substack sources (20): the daily cron was interrupted mid-ingest, and the duplicate-URL check then
+       blocked the article forever. The cron now releases `processing` sources older than 2h and indexes at
+       most 5 new articles per run. Probable cause: Workers execution limits; confirm in Observability logs
+   [ ] Failed ebooks (5): 4 hit NUL characters ("unsupported Unicode escape sequence"), now stripped at
+       ingestion. Re-import those 4 files. The 5th (`reading 'length'`) needs investigation
+4. [x] Discovery model moved from `gemini-2.0-flash` to `gemini-2.5-flash` (already used for YouTube), and
+       failures are now logged. Confirm it works once `GEMINI_API_KEY` is available locally
+5. [ ] Verify the first weekly email (Friday 2026-10-23, 12:00 Paris)
+6. [ ] Work through the open **Verify** items in Phases 3–9 (retrieval quality checks)
+7. [ ] Phase 11 — Connection Engine
+8. [ ] Phase 13 — Golden set + evals, before any prompt or model change
+9. [ ] Phase 14 — Finish open-source readiness (license, hardcoded values)
+
+---
+
 ## Content Indexing Checklist (do this in parallel with Phase 8+)
 *The richer your library, the better Lumen's answers. Index everything before using Libris seriously.*
 
@@ -43,7 +90,7 @@ Never start a phase until the previous one is fully working in production.
 - [x] Configure `requireSupabaseAuth` middleware (carry over from Libris)
 - [x] Set up all Cloudflare secrets (`wrangler secret put`)
 - [x] Verify: `npm run dev` works locally, `npx wrangler deploy` deploys successfully
-- [x] Set up CI: push to `main` → auto-deploy via GitHub Actions
+- [x] Set up CI: GitHub Actions runs tests + build on every push and PR; push to `main` → auto-deploy via Cloudflare Workers Builds (since 2026-10)
 
 ---
 
@@ -159,7 +206,7 @@ single-user use; the server function approach is simpler and equally capable at 
 - [x] YouTube video ingestion (`src/lib/sources/youtube.ts`) — youtubei/v1/player API (bypasses GDPR consent), oEmbed for metadata, manual caption track preferred over auto-generated, transcript chunked into ~2-min / 300-word segments
 - [x] Substack URL routing: `*.substack.com/p/` article URLs → single article ingest; `substack.com/@username` → handle extraction; custom-domain newsletters → RSS feed by root URL; 404 error message guides user to paste newsletter URL directly
 - [x] Substack feed sync: `syncSubstackFeeds` server function infers followed newsletters from existing `source_type='substack'` sources, checks up to 3 latest articles per feed, indexes new ones; "Sync feeds" button in library header for on-demand sync
-- [x] Daily cron (07:00 UTC) via Cloudflare Workers `scheduled` handler — iterates all users, runs Substack feed sync automatically (`SUPABASE_SERVICE_KEY` stored as Cloudflare secret)
+- [x] Daily cron (08:00 UTC) via Cloudflare Workers `scheduled` handler — iterates all users, runs Substack feed sync automatically (`SUPABASE_SERVICE_KEY` stored as Cloudflare secret)
 - [x] Import UI: URL tab auto-detects YouTube videos, Substack feeds, GitHub repos, and custom newsletter domains; channels blocked with helpful message
 - [x] Chat citations: deduplicated by `sourceId` (highest relevance kept), clickable links — external URL for web sources, internal `/book/:id` for books
 - [ ] Verify: Substack article key ideas retrievable and ranked correctly
@@ -177,38 +224,44 @@ single-user use; the server function approach is simpler and equally capable at 
 - [x] Preference memories injected into L2 suffix
 - [x] Pattern memories injected into L2 suffix (weekly analysis section)
 - [x] Semantic cache with 0.92 similarity threshold + 30-day TTL
-- [x] `analyse_patterns` weekly cron (Sunday 06:00 UTC) — Haiku extracts 3–5 patterns from last 30 nudges
+- [x] `analyse_patterns` weekly cron (Sunday 08:00 UTC) — Haiku extracts 3–5 patterns from last 30 nudges (only runs for users with ≥5 nudges in the last 30 days)
 - [ ] Verify: second session references first session's topic without being asked
 - [ ] Verify: preference memory shapes response style after 10+ interactions
 
 ---
 
-## Phase 9 — Daily Digest (TOPICS.md pipeline) ✓
-*Goal: user receives a morning email connecting their daily topics to their library.*
+## Phase 9 — Weekly Digest (TOPICS.md pipeline) ✓
+*Goal: one email a week, Friday 12:00 (Paris), connecting the week's critical work topics to the library,
+so Friday afternoon can be spent digging in. It was daily until 2026-10; one email a day was too much to read.*
 
-**Architecture note:** Direct Granola MCP integration replaced by a TOPICS.md-based pipeline.
-A ClaudeCowork routine (runs at 09:00 local) analyses Granola meetings + Slack activity and writes
-`TOPICS.md` in Obsidian. A local script (`sync/push-topics.ts`) syncs the file to Supabase at 09:30.
-The Cloudflare cron reads topics from Supabase and runs RAG — no Granola API needed server-side.
+**Architecture note:** Libris does not call Granola directly; the Granola MCP is not allowed on the work
+account. An external weekly routine (ChatGPT + Granola API + Slack) writes a curated selection of
+critical topics to `TOPICS.md` in Obsidian, one `**Libris query:**` per topic. A macOS LaunchAgent pushes
+the file to Supabase on every change. The Cloudflare cron reads topics from Supabase and runs RAG.
+See `docs/GRANOLA.md`.
 
-- [x] Cron scheduled task (08:00 UTC = 10:00 CEST) via Cloudflare Workers `scheduled` handler
-- [x] `parseTopicsFromMd` — extracts RAG search queries ("Question à explorer") from TOPICS.md
+- [x] Cron scheduled task: Friday `0 10 * * FRI` + `0 11 * * FRI` (UTC); `isWeeklyDigestSlot()` keeps only the run at 12:00 Europe/Paris (CEST/CET)
+- [x] Single pipeline in `src/lib/weekly-digest.ts`, shared by the cron and `sync/trigger-digest.ts [--force]`; idempotent per run date
+- [x] Stale-sync warning in the email when `topics_updated_at` is 6+ days old
+- [x] `parseTopicsFromMd` — extracts RAG search queries (`**Libris query:**`, then "Question à explorer" / "Question to explore") from the "To explore" section only
 - [x] `parseTopicTitlesFromMd` — extracts short display titles (shown as section headers)
 - [x] Parallel RAG search per topic (`match_chunks`, min similarity 0.50)
 - [x] Digest synthesis per topic (Opus, 1024 tokens) → Lumen voice
 - [x] Citations with URL: 🔗 clickable links for web sources, 📚 for books
 - [x] Cloudflare Email sending (`src/lib/email.ts`)
 - [x] `digest_runs` + `digest_themes` stored after each run
-- [x] Digest settings UI: enable/disable, delivery email, delivery time
+- [x] Digest settings UI: enable/disable, delivery email (fixed delivery: Friday 12:00 Paris)
 - [x] Topics panel: shows synced topics as chips + last sync date
 - [x] Test panel: "My topics" (reads from TOPICS.md in Supabase) + "Sample themes" fallback
 - [x] `sync/push-topics.ts` — local CLI to sync TOPICS.md → Supabase
 - [x] `sync/routine.template.md` — anonymised ClaudeCowork routine template (public)
-- [x] macOS LaunchAgent (`com.libris.sync`) — auto-sync at 09:30 daily; `com.seb.claude-wake` opens Claude at 09:00; Mac wakes via `pmset wakeorpoweron` at 09:00
+- [x] macOS LaunchAgent `com.libris.push-topics` (`sync/install-topics-sync.sh`) — pushes TOPICS.md on every change, plus a safety net every Friday at 11:30
 - [x] Quiz feature: "Test your memory" button in digest email → `/quiz/<runId>` deep-link
 - [x] `generateQuizQuestions` server fn — Haiku generates 1 MCQ per theme from synthesis text
 - [x] Quiz UI (`src/routes/_authenticated/quiz.$runId.tsx`) — one question at a time, reveal + explanation, result screen
 - [x] Digest history UI: last 7 digests, collapsible themes, email-sent indicator, Quiz link per run
+- [x] Privacy: real topics live only in Supabase; pre-commit guard `scripts/check-private-data.sh` keeps them out of the public repo
+- [ ] Verify: first weekly email received (Friday 2026-10-23)
 - [ ] Verify: no transcript content appears in DB (only anonymised themes)
 - [ ] Verify: digest email matches format in GRANOLA.md
 
@@ -263,7 +316,7 @@ Recommended flow: **barcode scan → Google Books lookup → confirm metadata �
 - [ ] "Three sources agree" detection: cluster chunks that converge on the same idea
 - [ ] "Under-referenced source" detection: books never cited in last 90 days
 - [ ] Connection highlights in chat UI: "Here's something worth noticing..."
-- [ ] Weekly connection digest (separate from daily Granola digest)
+- [ ] Connection highlights folded into the weekly Friday digest (no separate email; one email a week is the budget)
 - [ ] Verify: connection engine finds non-obvious links across source types
 
 ---
@@ -423,8 +476,10 @@ Start with 20 questions covering your most-used topics. Run against the live sys
 ## Phase 14 — Open Source Preparation
 *Goal: repo is clean, documented, safe to make public, and evals are passing.*
 
-- [ ] Audit for hardcoded values (user IDs, emails, org IDs)
-- [ ] Verify `.gitignore` covers all secret files
+- [ ] Audit for hardcoded values: `libris.seblevaillant.com` fallback for `APP_URL`, sender `digest@seblevaillant.com`,
+      Supabase project ref in `.husky/pre-commit`, tracked `supabase/.temp/`
+- [x] Verify `.gitignore` covers all secret files (`.env.local`, `.dev.vars`, `TOPICS*.md`, `.private-patterns`)
+- [x] Pre-commit guard against publishing private work data (repo is public since 2026-10)
 - [ ] Add demo mode (no API keys required — returns mock data)
 - [ ] Write `CONTRIBUTING.md`
 - [ ] Write `SECURITY.md` notice (responsible disclosure)
@@ -523,13 +578,13 @@ npm run lint          # no lint errors
 
 Key areas that need a proper plan before going live with real users:
 
-- **Custom domain** — wire `libris.app` (or chosen domain) to Cloudflare Workers
+- **Custom domain** — ✓ `seblevaillant.com` → Worker `libris` (Cloudflare account: Sebastien.levaillant@gmail.com's Account)
 - **Supabase production project** — separate from the dev project used today; migrate schema + seed data
 - **Secrets management** — all API keys via `wrangler secret put`, never in code
 - **Rate limiting** — protect the `/api/*` endpoints (Cloudflare WAF rules)
 - **Error monitoring** — Sentry or Cloudflare Workers observability for unhandled exceptions
 - **Arize integration** — trace every nudge (RAG retrieval + synthesis) for eval tracking
-- **CI/CD** — GitHub Actions already set up; add golden-set eval run as a required check
+- **CI/CD** — ✓ GitHub Actions (tests + build) + Cloudflare Workers Builds (deploy on push to `main`); next: golden-set eval run as a required check
 - **Billing guardrails** — Anthropic + Gemini spend alerts; abort if daily spend > threshold
 - **Auth hardening** — review Supabase Auth settings (session length, MFA option)
 - **GDPR / data residency** — Supabase EU region, data deletion endpoint for users

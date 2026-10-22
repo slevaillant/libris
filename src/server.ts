@@ -41,6 +41,8 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   return response;
 }
 
+const MAX_NEW_ARTICLES_PER_RUN = 5;
+
 type Env = {
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_KEY?: string;
@@ -202,14 +204,34 @@ export default {
             } catch {}
           }
 
+          // Release articles left in "processing" by an interrupted run so they get re-indexed
+          // (their URL would otherwise block them forever via the duplicate check below)
+          const staleBefore = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+          const { count: released } = await supabase
+            .from("sources")
+            .delete({ count: "exact" })
+            .eq("user_id", userId)
+            .eq("source_type", "substack")
+            .eq("ingest_status", "processing")
+            .lt("created_at", staleBefore);
+          if (released) console.log(`Cron: released ${released} stale Substack source(s) for user ${userId}`);
+
           // All indexed URLs for duplicate check
           const { data: indexed } = await supabase.from("sources").select("url").eq("user_id", userId);
           const indexedUrls = new Set((indexed ?? []).map((s: { url: string }) => s.url).filter(Boolean));
 
+          // Cap new articles per run so the cron finishes within Workers limits;
+          // the rest is picked up on the following days
+          let budget = MAX_NEW_ARTICLES_PER_RUN;
           for (const handle of newsletters) {
+            if (budget <= 0) break;
             try {
               const feed = await fetchSubstackFeed(handle);
-              const candidates = feed.articles.slice(0, 3).filter((a) => a.url && !indexedUrls.has(a.url));
+              const candidates = feed.articles
+                .slice(0, 3)
+                .filter((a) => a.url && !indexedUrls.has(a.url))
+                .slice(0, budget);
+              budget -= candidates.length;
 
               for (const article of candidates) {
                 const { data: source } = await supabase
