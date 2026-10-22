@@ -1,9 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { embedBatch } from "@/lib/gemini";
 import { stripNul } from "@/lib/utils";
+import { insertChunks } from "@/lib/chunks";
+import { findTableOfContents } from "@/lib/toc";
+import {
+  CHAPTER_SUMMARY_SYSTEM,
+  CHAPTER_SUMMARY_TOOL,
+  generateChapterSummary,
+  ingestDigitalBook,
+  replaceBookChapters,
+} from "@/lib/book-ingestion";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -214,104 +224,59 @@ export const extractTOCFromPhoto = createServerFn({ method: "POST" })
 export const suggestChapters = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) =>
-    z.object({ title: z.string(), author: z.string() }).parse(i),
+    z.object({ title: z.string(), author: z.string(), isbn: z.string().optional() }).parse(i),
   )
   .handler(async ({ data }) => {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 512,
-      system: [
-        {
-          type: "text" as const,
-          text: "You are a book knowledge agent. List a book's actual chapters using your training knowledge. If you don't know the exact chapters, return an empty array.",
-          cache_control: { type: "ephemeral" as const },
-        },
-      ],
-      tools: [
-        {
-          name: "suggest_chapters",
-          description: "List the chapters of a known book",
-          input_schema: {
-            type: "object" as const,
-            properties: {
-              chapters: {
-                type: "array" as const,
-                items: { type: "string" as const },
-                description: "Chapter titles in order",
-              },
-            },
-            required: ["chapters"],
-          },
-        },
-      ],
-      tool_choice: { type: "tool" as const, name: "suggest_chapters" },
-      messages: [
-        {
-          role: "user",
-          content: `Book: "${data.title}" by ${data.author}. List the chapters.`,
-        },
-      ],
-    });
-
-    const toolUse = response.content.find((b) => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") return [] as string[];
-    return (toolUse.input as { chapters: string[] }).chapters;
+    const toc = await findTableOfContents(
+      { title: data.title, author: data.author, isbn: data.isbn },
+      { anthropic, geminiApiKey: process.env.GEMINI_API_KEY },
+    );
+    return { chapters: toc?.chapters ?? [], source: toc?.source ?? null, sourceUrl: toc?.sourceUrl ?? null };
   });
 
-// ─── Generate a single chapter summary (Haiku, prompt-cached) ────────────────
+// ─── Find a book's real table of contents (no write) ─────────────────────────
 
-const CHAPTER_SUMMARY_SYSTEM = `You are a knowledge indexing agent for Libris.
-Generate a 100-150 word chapter summary for semantic search.
-Cover: the core argument, 2-3 key concepts introduced, the type of reader who benefits, and the problem it solves.
-Be specific and accurate. Use the provided tool only.`;
-
-const CHAPTER_SUMMARY_TOOL = {
-  name: "generate_chapter_summary" as const,
-  description: "Generate a chapter summary for semantic indexing",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      summary: {
-        type: "string" as const,
-        description: "100-150 word summary of this chapter",
-      },
-    },
-    required: ["summary"],
-  },
-};
-
-async function generateChapterSummary(
-  anthropic: Anthropic,
-  bookTitle: string,
-  bookAuthor: string,
-  chapterTitle: string,
-): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 256,
-    system: [
-      {
-        type: "text" as const,
-        text: CHAPTER_SUMMARY_SYSTEM,
-        cache_control: { type: "ephemeral" as const },
-      },
-    ],
-    tools: [CHAPTER_SUMMARY_TOOL],
-    tool_choice: { type: "tool" as const, name: "generate_chapter_summary" },
-    messages: [
-      {
-        role: "user",
-        content: `Book: "${bookTitle}" by ${bookAuthor}\nChapter: "${chapterTitle}"`,
-      },
-    ],
+export const findBookToc = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => z.object({ sourceId: z.string().uuid() }).parse(i))
+  .handler(async ({ data, context }) => {
+    const { data: source } = await context.supabase
+      .from("sources")
+      .select("title, author, isbn")
+      .eq("id", data.sourceId)
+      .eq("user_id", context.userId)
+      .single();
+    if (!source) throw new Error("Source not found");
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // Online sources only: the point is to replace a table of contents recalled from memory
+    return findTableOfContents(
+      { title: source.title as string, author: source.author as string | null, isbn: source.isbn as string | null },
+      { anthropic, geminiApiKey: process.env.GEMINI_API_KEY, allowMemory: false },
+    );
   });
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") return chapterTitle;
-  return (toolUse.input as { summary: string }).summary;
-}
+// ─── Replace a book's chapters with a confirmed table of contents ────────────
+
+export const replaceChapters = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        sourceId: z.string().uuid(),
+        chapters: z.array(z.string()).min(1),
+        source: z.enum(["screenshot", "open_library", "web", "ai_memory"]),
+        sourceUrl: z.string().nullable(),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data, context }) =>
+    replaceBookChapters(context.supabase as SupabaseClient, context.userId, data.sourceId, {
+      chapters: data.chapters,
+      source: data.source,
+      sourceUrl: data.sourceUrl,
+    }),
+  );
 
 // ─── Add physical book (create source + ingest synchronously) ─────────────────
 
@@ -327,6 +292,8 @@ export const addPhysicalBook = createServerFn({ method: "POST" })
         description: z.string().optional(),
         shelfLocation: z.string().optional(),
         chapters: z.array(z.string()).min(1, "Add at least one chapter"),
+        tocSource: z.enum(["screenshot", "open_library", "web", "ai_memory"]).optional(),
+        tocSourceUrl: z.string().nullable().optional(),
       })
       .parse(i),
   )
@@ -347,6 +314,8 @@ export const addPhysicalBook = createServerFn({ method: "POST" })
         description: data.description ?? null,
         shelf_location: data.shelfLocation ?? null,
         ingest_status: "processing",
+        toc_source: data.tocSource ?? null,
+        toc_source_url: data.tocSourceUrl ?? null,
         authority_tier: 3,
       })
       .select("id")
@@ -379,8 +348,7 @@ export const addPhysicalBook = createServerFn({ method: "POST" })
         token_count: Math.ceil(summaries[i].length / 4),
       }));
 
-      const { error: chunksErr } = await supabase.from("chunks").insert(chunkRows);
-      if (chunksErr) throw new Error(chunksErr.message);
+      await insertChunks(supabase as SupabaseClient, chunkRows);
 
       // 5. Mark complete
       await supabase
@@ -549,102 +517,22 @@ const DigitalChunkSchema = z.object({
   pageNumber: z.number().nullable().optional(),
 });
 
+const DigitalBookSchema = z.object({
+  title: z.string().min(1),
+  author: z.string().optional(),
+  isbn: z.string().optional(),
+  coverUrl: z.string().optional(),
+  description: z.string().optional(),
+  chunks: z.array(DigitalChunkSchema).min(1),
+});
+
+
 export const addDigitalBook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: unknown) =>
-    z
-      .object({
-        title: z.string().min(1),
-        author: z.string().optional(),
-        isbn: z.string().optional(),
-        coverUrl: z.string().optional(),
-        description: z.string().optional(),
-        chunks: z.array(DigitalChunkSchema).min(1),
-      })
-      .parse(i),
-  )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const chunks = data.chunks
-      .map((c) => ({ ...c, content: stripNul(c.content), chapterTitle: c.chapterTitle ? stripNul(c.chapterTitle) : c.chapterTitle }))
-      .filter((c) => c.content.trim().length > 0);
-    if (chunks.length === 0) throw new Error("No readable text found in this file");
-
-    // Replace any earlier failed import of the same book
-    await supabase
-      .from("sources")
-      .delete()
-      .eq("user_id", userId)
-      .eq("source_type", "ebook")
-      .eq("ingest_status", "failed")
-      .ilike("title", stripNul(data.title));
-
-    // 1. Create source
-    const { data: source, error: sourceErr } = await supabase
-      .from("sources")
-      .insert({
-        user_id: userId,
-        source_type: "ebook",
-        title: stripNul(data.title),
-        author: data.author ? stripNul(data.author) : null,
-        isbn: data.isbn ?? null,
-        cover_url: data.coverUrl ?? null,
-        description: data.description ?? null,
-        ingest_status: "processing",
-        authority_tier: 3,
-      })
-      .select("id")
-      .single();
-
-    if (sourceErr || !source) throw new Error(sourceErr?.message ?? "Failed to create source");
-
-    try {
-      // 2. Embed in batches of 100
-      const { embedBatch } = await import("@/lib/gemini");
-      const BATCH = 100;
-      const allEmbeddings: (number[] | null)[] = [];
-
-      for (let i = 0; i < chunks.length; i += BATCH) {
-        const batch = chunks.slice(i, i + BATCH).map((c) => c.content);
-        const embeddings = await embedBatch(batch).catch(() => batch.map(() => null));
-        allEmbeddings.push(...embeddings);
-      }
-
-      // 3. Insert chunks
-      const chunkRows = chunks.map((chunk, i) => ({
-        source_id: source.id,
-        user_id: userId,
-        chunk_index: i,
-        content: chunk.content,
-        chapter_title: chunk.chapterTitle ?? null,
-        chunk_type: "passage",
-        embedding: allEmbeddings[i] ? JSON.stringify(allEmbeddings[i]) : null,
-        indexed_at: new Date().toISOString(),
-        token_count: Math.ceil(chunk.content.length / 4),
-      }));
-
-      const { error: chunksErr } = await supabase.from("chunks").insert(chunkRows);
-      if (chunksErr) throw new Error(chunksErr.message);
-
-      // 4. Mark complete
-      await supabase
-        .from("sources")
-        .update({
-          ingest_status: "complete",
-          total_chunks: chunks.length,
-          last_ingested: new Date().toISOString(),
-        })
-        .eq("id", source.id);
-
-      return { sourceId: source.id as string };
-    } catch (err) {
-      await supabase
-        .from("sources")
-        .update({ ingest_status: "failed", ingest_error: String(err) })
-        .eq("id", source.id);
-      throw err;
-    }
-  });
+  .inputValidator((i: unknown) => DigitalBookSchema.parse(i))
+  .handler(async ({ data, context }) =>
+    ingestDigitalBook(context.supabase as SupabaseClient, context.userId, data),
+  );
 
 // ─── Extract books from a Kindle library screenshot (Haiku vision) ────────────
 
@@ -735,41 +623,13 @@ export const addKindleBook = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    // 1. Auto-suggest chapters
-    const chapterResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 512,
-      system: [
-        {
-          type: "text" as const,
-          text: "You are a book knowledge agent. List the actual chapters of this book using your training knowledge. If you don't know the exact chapters, return a reasonable set of chapter titles based on common book structure.",
-          cache_control: { type: "ephemeral" as const },
-        },
-      ],
-      tools: [
-        {
-          name: "suggest_chapters",
-          description: "List the chapters of a book",
-          input_schema: {
-            type: "object" as const,
-            properties: {
-              chapters: { type: "array" as const, items: { type: "string" as const } },
-            },
-            required: ["chapters"],
-          },
-        },
-      ],
-      tool_choice: { type: "tool" as const, name: "suggest_chapters" },
-      messages: [
-        { role: "user", content: `Book: "${data.title}" by ${data.author ?? "Unknown"}. List the chapters.` },
-      ],
-    });
-
-    const chapterToolUse = chapterResponse.content.find((b) => b.type === "tool_use");
-    const chapters: string[] =
-      chapterToolUse && chapterToolUse.type === "tool_use"
-        ? (chapterToolUse.input as { chapters: string[] }).chapters
-        : [`Introduction`, `Part 1`, `Part 2`, `Conclusion`];
+    // 1. Real table of contents (Open Library → web), else model memory without invention
+    const toc = await findTableOfContents(
+      { title: data.title, author: data.author, isbn: data.isbn },
+      { anthropic, geminiApiKey: process.env.GEMINI_API_KEY },
+    );
+    // Unknown book: one overview chunk rather than made-up chapters
+    const chapters: string[] = toc?.chapters ?? ["Book overview"];
 
     // 2. Create source
     const { data: source, error: sourceErr } = await supabase
@@ -783,6 +643,8 @@ export const addKindleBook = createServerFn({ method: "POST" })
         cover_url: data.coverUrl ?? null,
         description: data.description ?? null,
         ingest_status: "processing",
+        toc_source: toc?.source ?? "ai_memory",
+        toc_source_url: toc?.sourceUrl ?? null,
         authority_tier: 3,
       })
       .select("id")
@@ -831,8 +693,7 @@ export const addKindleBook = createServerFn({ method: "POST" })
         token_count: Math.ceil(summaries[i].length / 4),
       }));
 
-      const { error: chunksErr } = await supabase.from("chunks").insert(chunkRows);
-      if (chunksErr) throw new Error(chunksErr.message);
+      await insertChunks(supabase as SupabaseClient, chunkRows);
 
       await supabase
         .from("sources")

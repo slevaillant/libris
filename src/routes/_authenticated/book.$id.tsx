@@ -17,8 +17,11 @@ import {
   RefreshCw,
   Sparkles,
   ExternalLink,
+  Search,
 } from "lucide-react";
 import { getSource, reembedSource, type ChunkRow } from "@/lib/sources.functions";
+import { extractTOCFromPhoto, findBookToc, replaceChapters } from "@/lib/library.functions";
+import type { TocSource } from "@/lib/toc";
 import {
   createHighlight,
   listHighlights,
@@ -48,12 +51,162 @@ type SourceDetail = {
   ingestError: string | null;
   isRead: boolean;
   tags: string[];
+  tocSource: string | null;
+  tocSourceUrl: string | null;
   createdAt: string;
 };
 
 export const Route = createFileRoute("/_authenticated/book/$id")({
   component: BookDetail,
 });
+
+// ─── Table of contents panel ─────────────────────────────────────────────────
+
+const TOC_ORIGIN: Record<TocSource, string> = {
+  screenshot: "your screenshot",
+  open_library: "Open Library",
+  web: "the web",
+  ai_memory: "AI memory",
+};
+
+const readAsBase64 = (file: File) =>
+  new Promise<string>((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res((reader.result as string).split(",")[1]);
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+
+function TableOfContentsPanel({ source, onReplaced }: { source: SourceDetail; onReplaced: () => void }) {
+  const findFn = useServerFn(findBookToc);
+  const photoFn = useServerFn(extractTOCFromPhoto);
+  const replaceFn = useServerFn(replaceChapters);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState<"find" | "scan" | "save" | null>(null);
+  const [draft, setDraft] = useState<{ text: string; source: TocSource; url: string | null } | null>(null);
+
+  const origin = source.tocSource as TocSource | null;
+  const approximate = !origin || origin === "ai_memory";
+
+  const find = async () => {
+    setBusy("find");
+    try {
+      const toc = await findFn({ data: { sourceId: source.id } });
+      if (!toc) toast.info("No published table of contents found online — upload a screenshot instead");
+      else setDraft({ text: toc.chapters.join("\n"), source: toc.source, url: toc.sourceUrl });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Search failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const scan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setBusy("scan");
+    try {
+      const found: string[] = [];
+      for (const file of files) {
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) continue;
+        const chapters = await photoFn({
+          data: { imageBase64: await readAsBase64(file), mimeType: file.type as "image/jpeg" | "image/png" | "image/webp" },
+        });
+        found.push(...chapters);
+      }
+      if (found.length === 0) {
+        toast.info("Could not read chapters — try a clearer screenshot");
+      } else {
+        // Screenshots of several pages accumulate in order
+        setDraft((prev) => ({
+          text: prev?.source === "screenshot" ? `${prev.text}\n${found.join("\n")}` : found.join("\n"),
+          source: "screenshot",
+          url: null,
+        }));
+      }
+    } catch {
+      toast.error("Could not read the screenshot");
+    } finally {
+      setBusy(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    const chapters = draft.text.split("\n").map((c) => c.trim()).filter(Boolean);
+    if (chapters.length === 0) return;
+    setBusy("save");
+    try {
+      const { chapters: n } = await replaceFn({
+        data: { sourceId: source.id, chapters, source: draft.source, sourceUrl: draft.url },
+      });
+      toast.success(`Chapters replaced — ${n} chapter summaries re-indexed`);
+      setDraft(null);
+      onReplaced();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not replace chapters");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className={cn("rounded-lg border p-3 space-y-2", approximate ? "border-amber-500/30 bg-amber-500/5" : "border-border")}>
+      <div className="flex flex-wrap items-center gap-2">
+        {approximate ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            Chapters reconstructed by AI — they may not match the book.
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Chapters from {TOC_ORIGIN[origin]}
+            {source.tocSourceUrl && (
+              <a href={source.tocSourceUrl} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-0.5 underline">
+                source <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+          </p>
+        )}
+        <div className="ml-auto flex gap-1.5">
+          <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={find} disabled={busy !== null}>
+            {busy === "find" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+            Find real table of contents
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
+            {busy === "scan" ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImageIcon className="h-3 w-3" />}
+            Upload TOC screenshot
+          </Button>
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={scan} />
+        </div>
+      </div>
+
+      {draft && (
+        <div className="space-y-2">
+          <Label className="text-[11px]">
+            Preview — from {TOC_ORIGIN[draft.source]} · one chapter per line, edit if needed
+          </Label>
+          <textarea
+            value={draft.text}
+            onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+            rows={Math.min(14, draft.text.split("\n").length + 1)}
+            className="w-full rounded-md border bg-background px-2.5 py-2 text-[11px] leading-relaxed"
+          />
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-7 text-[11px]" onClick={save} disabled={busy !== null}>
+              {busy === "save" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Replace chapters
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setDraft(null)} disabled={busy === "save"}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Status pill ──────────────────────────────────────────────────────────────
 
@@ -516,7 +669,7 @@ function BookDetail() {
   const refreshHighlights = () =>
     fetchHighlights({ data: { sourceId: id } }).then(setHighlights).catch(() => undefined);
 
-  useEffect(() => {
+  const load = () =>
     Promise.all([
       fetchSource({ data: { sourceId: id } }),
       fetchHighlights({ data: { sourceId: id } }),
@@ -527,6 +680,9 @@ function BookDetail() {
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
+
+  useEffect(() => {
+    load();
   }, [id]);
 
   const chapterOptions = (data?.chunks ?? [])
@@ -698,6 +854,7 @@ function BookDetail() {
               const keyIdeas = data.chunks.filter((c) => c.chunkType === "key_idea");
               const others = data.chunks.filter((c) => c.chunkType !== "key_idea");
               const isArticle = ["substack", "web_article"].includes(data.source.sourceType);
+              const hasChapterSummaries = data.chunks.some((c) => c.chunkType === "chapter_summary");
               return (
                 <>
                   {keyIdeas.length > 0 && (
@@ -734,6 +891,9 @@ function BookDetail() {
                           </span>
                         </h2>
                       </div>
+                      {!isArticle && hasChapterSummaries && (
+                        <TableOfContentsPanel source={data.source} onReplaced={load} />
+                      )}
                       <div className="space-y-1.5">
                         {others.map((chunk) => (
                           <ChapterItem key={chunk.id} chunk={chunk} isArticle={isArticle} />

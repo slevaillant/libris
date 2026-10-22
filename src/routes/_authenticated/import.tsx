@@ -55,6 +55,7 @@ import {
 } from "@/lib/highlights.functions";
 import { listSources } from "@/lib/sources.functions";
 import type { PdfExtractResult } from "@/lib/sources/pdf";
+import type { TocSource } from "@/lib/toc";
 import type { EpubExtractResult } from "@/lib/sources/epub";
 
 export const Route = createFileRoute("/_authenticated/import")({
@@ -400,6 +401,8 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
   const [isbn, setIsbn] = useState(draft.isbn);
   const [shelfLocation, setShelfLocation] = useState(draft.shelfLocation);
   const [chaptersText, setChaptersText] = useState("");
+  // Where the chapter list came from — stored so AI-recalled chapters can be flagged later
+  const [tocOrigin, setTocOrigin] = useState<{ source: TocSource; url: string | null } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [scanningTOC, setScanningTOC] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -408,11 +411,14 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
     if (!title.trim()) { toast.error("Enter a title first"); return; }
     setSuggesting(true);
     try {
-      const chapters = await suggestFn({ data: { title, author } });
-      if (chapters.length === 0) {
+      const toc = await suggestFn({ data: { title, author, isbn: isbn || undefined } });
+      if (toc.chapters.length === 0 || !toc.source) {
         toast.info("No chapter data found — scan the TOC or enter manually");
       } else {
-        setChaptersText(chapters.join("\n"));
+        setChaptersText(toc.chapters.join("\n"));
+        setTocOrigin({ source: toc.source, url: toc.sourceUrl });
+        const from = { open_library: "Open Library", web: "the web", ai_memory: "AI memory — check them", screenshot: "screenshot" }[toc.source];
+        toast.success(`${toc.chapters.length} chapters from ${from}`);
       }
     } catch {
       toast.error("Could not suggest chapters");
@@ -440,6 +446,7 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
         setChaptersText((prev) =>
           prev.trim() ? `${prev.trim()}\n${chapters.join("\n")}` : chapters.join("\n"),
         );
+        setTocOrigin({ source: "screenshot", url: null });
         toast.success(`${chapters.length} chapters extracted — scan next page if needed`);
       }
     } catch {
@@ -465,6 +472,8 @@ function PhysicalReviewStep({ draft, onBack }: { draft: Draft; onBack: () => voi
           description: draft.description || undefined,
           shelfLocation: shelfLocation || undefined,
           chapters,
+          tocSource: tocOrigin?.source,
+          tocSourceUrl: tocOrigin?.url ?? null,
         },
       });
       toast.success(`"${title}" added to your library`);

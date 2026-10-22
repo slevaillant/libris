@@ -46,6 +46,13 @@ which is why this went unnoticed.
        most 5 new articles per run. Probable cause: Workers execution limits; confirm in Observability logs
    [ ] Failed ebooks (5): 4 hit NUL characters ("unsupported Unicode escape sequence"), now stripped at
        ingestion. Re-import those 4 files. The 5th (`reading 'length'`) needs investigation
+3b. [x] **Real tables of contents** (2026-10-22): 55 books contained only AI chapter summaries built from chapters
+       the model invented (the Kindle import prompt asked it to). `src/lib/toc.ts` now looks up the real TOC
+       (Open Library → web search with source → model memory that must not invent). `sources.toc_source` records
+       the origin; book pages flag AI-recalled chapters and can replace them (online lookup or TOC screenshot);
+       `sync/fix-tocs.ts` fixes existing books in bulk
+   [x] Free books imported from their authors' sites: *The Little Book of Deep Learning*, *Reinforcement Learning*
+       (`sync/import-pdf.ts`). Chunk inserts are batched (the HNSW index made large inserts time out)
 4. [x] Discovery model moved from `gemini-2.0-flash` to `gemini-2.5-flash` (already used for YouTube), and
        failures are now logged. Confirm it works once `GEMINI_API_KEY` is available locally
 5. [ ] Verify the first weekly email (Friday 2026-10-23, 12:00 Paris)

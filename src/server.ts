@@ -312,7 +312,8 @@ export default {
                     })),
                   ];
 
-                  await supabase.from("chunks").insert(chunkRows);
+                  const { insertChunks } = await import("./lib/chunks");
+                  await insertChunks(supabase, chunkRows);
                   await supabase.from("sources").update({ ingest_status: "complete", total_chunks: chunkRows.length, last_ingested: new Date().toISOString() }).eq("id", source.id);
                   console.log(`Cron: indexed "${article.title}" for user ${userId}`);
                 } catch (err) {
