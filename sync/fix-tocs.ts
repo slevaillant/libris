@@ -4,7 +4,8 @@
  * Targets books whose content is only AI chapter summaries and whose TOC origin is unknown
  * or "ai_memory". Dry run by default.
  *
- * Usage: npx tsx sync/fix-tocs.ts [--apply] [--limit N] [--title "substring"]
+ * Usage: npx tsx sync/fix-tocs.ts [--apply] [--limit N] [--title "substring"] [--skip "sub1,sub2"]
+ *   --skip  comma-separated title substrings to leave untouched (lookups judged unreliable)
  *
  * Reads SUPABASE_URL, SUPABASE_SERVICE_KEY, GEMINI_API_KEY (+ ANTHROPIC_API_KEY with --apply)
  * from .env.local (or env).
@@ -40,6 +41,7 @@ const arg = (name: string) => {
 };
 const limit = Number(arg("--limit") ?? Infinity);
 const titleFilter = arg("--title")?.toLowerCase();
+const skip = (arg("--skip") ?? "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -67,10 +69,11 @@ let replaced = 0;
 for (const book of books ?? []) {
   if (checked >= limit) break;
   if (titleFilter && !(book.title as string).toLowerCase().includes(titleFilter)) continue;
+  if (skip.some((t) => (book.title as string).toLowerCase().includes(t))) continue;
 
   // Only books whose content is AI chapter summaries (full-text books have real passages)
   const { data: chunks } = await supabase.from("chunks").select("chunk_type, chapter_title").eq("source_id", book.id);
-  if (!chunks?.length || chunks.some((c) => c.chunk_type === "passage")) continue;
+  if (chunks?.some((c) => c.chunk_type === "passage")) continue; // empty books (failed earlier fix) are eligible
   checked++;
 
   const current = chunks.filter((c) => c.chunk_type === "chapter_summary").map((c) => c.chapter_title as string);

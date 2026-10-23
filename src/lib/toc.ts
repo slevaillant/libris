@@ -12,7 +12,7 @@ const MIN_CHAPTERS = 3;
 const MAX_CHAPTERS = 40;
 
 // Front/back matter that carries no searchable knowledge
-const NON_CHAPTER = /^(table of )?contents$|^copyright|^index$|^about the authors?$|^acknowledg|^dedication$|^colophon$|^also by |^praise for |^preface$|^foreword$/i;
+const NON_CHAPTER = /^(table of )?contents$|^copyright|^index$|^about the authors?$|^acknowledg|^dedication$|^colophon$|^also by |^praise for |^preface$|^foreword$|^cover$|flyleaf|^title page|imprint$|^quotations$/i;
 // Chatter around a list ("Here is the table of contents:"), not a chapter
 const NOT_A_TITLE = /table of contents|:\s*$/i;
 
@@ -164,15 +164,26 @@ export async function recallTocFromMemory(anthropic: Anthropic, book: BookRef): 
 
 // ─── Orchestration ────────────────────────────────────────────────────────────
 
+/** Drop entries that just repeat the book's own title (listings often start with it). */
+export function withoutBookTitle(toc: TocResult | null, bookTitle: string): TocResult | null {
+  if (!toc) return null;
+  const main = bookTitle.split(":")[0].trim().toLowerCase();
+  const chapters = toc.chapters.filter((c) => {
+    const t = c.toLowerCase();
+    return t !== bookTitle.toLowerCase() && t !== main && !t.startsWith(`${main}:`);
+  });
+  return chapters.length >= MIN_CHAPTERS ? { ...toc, chapters } : null;
+}
+
 export async function findTableOfContents(
   book: BookRef,
   { anthropic, geminiApiKey, allowMemory = true }: { anthropic: Anthropic; geminiApiKey?: string; allowMemory?: boolean },
 ): Promise<TocResult | null> {
-  const fromOpenLibrary = await findOpenLibraryToc(book).catch(() => null);
+  const fromOpenLibrary = withoutBookTitle(await findOpenLibraryToc(book).catch(() => null), book.title);
   if (fromOpenLibrary) return fromOpenLibrary;
   if (geminiApiKey) {
-    const fromWeb = await findWebToc(book, geminiApiKey).catch(() => null);
+    const fromWeb = withoutBookTitle(await findWebToc(book, geminiApiKey).catch(() => null), book.title);
     if (fromWeb) return fromWeb;
   }
-  return allowMemory ? recallTocFromMemory(anthropic, book).catch(() => null) : null;
+  return allowMemory ? withoutBookTitle(await recallTocFromMemory(anthropic, book).catch(() => null), book.title) : null;
 }

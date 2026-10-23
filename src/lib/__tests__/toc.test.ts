@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanChapterTitles, tocFromEdition } from "@/lib/toc";
+import { cleanChapterTitles, tocFromEdition, withoutBookTitle } from "@/lib/toc";
 
 describe("cleanChapterTitles", () => {
   it("strips list markers, page numbers and front matter, and dedupes", () => {
@@ -44,5 +44,20 @@ describe("tocFromEdition (Open Library)", () => {
       ],
     };
     expect(tocFromEdition(ed)).toEqual(["Chapter One", "Chapter Two", "Chapter Three", "Chapter Four"]);
+  });
+});
+
+describe("withoutBookTitle", () => {
+  it("drops entries repeating the book title, keeps real chapters", () => {
+    const toc = {
+      source: "web" as const,
+      sourceUrl: null,
+      chapters: ["Loyalty 3.0: How Big Data and Gamification Are Revolutionizing Engagement", "Introduction", "Part 1: Vision", "The Loyalty Problem"],
+    };
+    expect(withoutBookTitle(toc, "Loyalty 3.0: How to Revolutionize Customer and Employee Engagement")?.chapters).toEqual([
+      "Introduction",
+      "Part 1: Vision",
+      "The Loyalty Problem",
+    ]);
   });
 });

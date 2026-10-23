@@ -68,7 +68,8 @@ export async function generateChapterSummary(
 
   const toolUse = response.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") return chapterTitle;
-  return (toolUse.input as { summary: string }).summary;
+  const summary = (toolUse.input as { summary?: unknown }).summary;
+  return typeof summary === "string" && summary.trim() ? summary : chapterTitle;
 }
 
 export async function generateChapterSummaries(
@@ -109,16 +110,20 @@ export async function replaceBookChapters(
   const summaries = await generateChapterSummaries(anthropic, source.title as string, (source.author as string) ?? "Unknown", chapters);
   const embeddings = await embedBatch(summaries);
 
-  await supabase.from("chunks").delete().eq("source_id", sourceId).eq("chunk_type", "chapter_summary");
-
-  // Keep (source_id, chunk_index) unique if other chunks (passages, highlights) remain
+  // Insert the new chapters first and delete the old ones only once that worked,
+  // so a failure can never leave the book without chapters
+  const { data: old } = await supabase
+    .from("chunks")
+    .select("id")
+    .eq("source_id", sourceId)
+    .eq("chunk_type", "chapter_summary");
   const { data: last } = await supabase
     .from("chunks")
     .select("chunk_index")
     .eq("source_id", sourceId)
     .order("chunk_index", { ascending: false })
     .limit(1);
-  const start = last?.length ? (last[0].chunk_index as number) + 1 : 0;
+  const start = last?.length ? (last[0].chunk_index as number) + 1 : 0; // keeps (source_id, chunk_index) unique
 
   await insertChunks(
     supabase,
@@ -134,6 +139,11 @@ export async function replaceBookChapters(
       token_count: Math.ceil(summaries[i].length / 4),
     })),
   );
+
+  const oldIds = (old ?? []).map((c) => c.id as string);
+  for (let i = 0; i < oldIds.length; i += 100) {
+    await supabase.from("chunks").delete().in("id", oldIds.slice(i, i + 100));
+  }
 
   const { count } = await supabase.from("chunks").select("id", { count: "exact", head: true }).eq("source_id", sourceId);
   await supabase
