@@ -55,10 +55,16 @@ export async function sendEmail({
 export type DigestSection = {
   theme: string;
   synthesis: string;
-  citations: { title: string; author: string | null; chapterTitle: string | null; url: string | null }[];
+  /** `ref` is the [n] number the synthesis uses for this passage. */
+  citations: { ref?: number; title: string; author: string | null; chapterTitle: string | null; url: string | null }[];
   readingSuggestion: { title: string; chapter: string } | null;
   discoveredResources?: { url: string; title: string; sourceType: string; ingested: boolean }[];
 };
+
+/** The synthesis is plain text with occasional **bold** (model output). */
+function markdownBold(text: string): string {
+  return text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
 
 export function buildDigestEmail(
   displayName: string,
@@ -77,7 +83,7 @@ export function buildDigestEmail(
       <p style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 12px;">
         ${s.theme}
       </p>
-      <p style="font-size:14px;line-height:1.7;color:#111827;margin:0 0 16px;">${s.synthesis}</p>
+      <p style="font-size:14px;line-height:1.7;color:#111827;margin:0 0 16px;">${markdownBold(s.synthesis)}</p>
       ${
         s.citations.length > 0
           ? `<div style="margin:0 0 12px;">
@@ -85,11 +91,11 @@ export function buildDigestEmail(
             .map(
               (c) => `
             <p style="font-size:12px;color:#374151;margin:4px 0;">
-              ${c.url ? "🔗" : "📚"}
+              ${c.ref ? `<span style="color:#6b7280;font-weight:600;">[${c.ref}]</span>` : c.url ? "🔗" : "📚"}
               ${c.url
                 ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
                 : `<strong>${c.title}</strong>`
-              }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}
+              }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}${c.chapterTitle ? ` <span style="color:#9ca3af;">· ${c.chapterTitle}</span>` : ""}
             </p>`,
             )
             .join("")}
@@ -172,7 +178,7 @@ export function buildDigestEmail(
   </html>`;
 
   const text = (notice ? `${notice}\n\n` : "") + sections
-    .map((s) => `${s.theme.toUpperCase()}\n\n${s.synthesis}\n\n${s.citations.map((c) => `• ${c.title}${c.chapterTitle ? ` — ${c.chapterTitle}` : ""}${c.url ? `\n  ${c.url}` : ""}`).join("\n")}\n`)
+    .map((s) => `${s.theme.toUpperCase()}\n\n${s.synthesis}\n\n${s.citations.map((c) => `${c.ref ? `[${c.ref}]` : "•"} ${c.title}${c.chapterTitle ? ` — ${c.chapterTitle}` : ""}${c.url ? `\n  ${c.url}` : ""}`).join("\n")}\n`)
     .join("\n---\n\n");
 
   return { subject, html, text };

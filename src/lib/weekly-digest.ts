@@ -13,6 +13,8 @@ const DIGEST_TZ = "Europe/Paris";
 const DIGEST_WEEKDAY = "Fri";
 const DIGEST_HOUR = 12;
 const STALE_TOPICS_DAYS = 6;
+// Generated chunk labels ("Key idea 2", "Section 3") mean nothing to a reader
+const CHUNK_LABEL = /^(key idea|section) \d+$/i;
 
 // ─── Scheduling ───────────────────────────────────────────────────────────────
 
@@ -172,7 +174,7 @@ async function runForProfile(
           content: [
             {
               type: "text",
-              text: `You are ${librarianName}, writing ${displayName}'s weekly Friday deep-dive. They set Friday afternoon aside to dig into the critical work challenges of their week. Write one focused paragraph connecting this week's challenge to the library passages. End with what to read first this afternoon, and why.`,
+              text: `You are ${librarianName}, writing ${displayName}'s weekly Friday deep-dive. They set Friday afternoon aside to dig into the critical work challenges of their week. Write one focused paragraph connecting this week's challenge to the library passages. Cite passages by their [n] number — the email lists them below your paragraph. End with what to read first this afternoon, and why, naming the book or article (and chapter) as well as its number.`,
               cache_control: { type: "ephemeral" },
             },
             { type: "text", text: `Challenge: "${topic.title}"\n\nQuestion: "${topic.query}"\n\nPassages:\n${passages}` },
@@ -183,12 +185,16 @@ async function runForProfile(
       if (tb?.type === "text") synthesis = tb.text;
     }
 
-    const seen = new Set<string>();
-    const citations = matched
-      .filter((c) => { const k = c.url ?? c.source_id; if (seen.has(k)) return false; seen.add(k); return true; })
-      .slice(0, 3)
-      .map((c) => ({ title: c.title, author: c.author, chapterTitle: null, url: c.url ?? null }));
-    citationCount += citations.length;
+    // One numbered reference per passage, matching the [n] markers in the synthesis.
+    // Books have no external URL: link to their page in Libris.
+    const citations = matched.map((c, j) => ({
+      ref: j + 1,
+      title: c.title,
+      author: c.author,
+      chapterTitle: c.chapter_title && !CHUNK_LABEL.test(c.chapter_title) ? c.chapter_title : null,
+      url: c.url ?? `${appUrl}/book/${c.source_id}`,
+    }));
+    citationCount += new Set(matched.map((c) => c.source_id)).size;
     sections.push({
       theme: topic.title,
       synthesis,
