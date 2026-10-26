@@ -276,13 +276,13 @@ async function runForProfile(
     if (matched.length === 0 && !discovered.some((r) => r.ingested)) continue;
 
     // One numbered reference per passage, matching the [n] markers in the brief.
-    // Books have no external URL: link to their page in Libris.
+    // Books have no external URL: link to the cited passage in the Libris reader.
     const references: TopicReference[] = matched.map((c, j) => ({
       ref: j + 1,
       title: c.title,
       author: c.author,
       chapterTitle: c.chapter_title && !CHUNK_LABEL.test(c.chapter_title) ? c.chapter_title : null,
-      url: c.url ?? `${appUrl}/book/${c.source_id}`,
+      url: c.url ?? `${appUrl}/book/${c.source_id}?passage=${c.chunk_id}`, // opens the reader on this passage
       why: null,
     }));
 
