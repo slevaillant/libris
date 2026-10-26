@@ -4,7 +4,7 @@ import { buildDigestEmail } from "@/lib/email";
 describe("buildDigestEmail — numbered references", () => {
   const { html, text } = buildDigestEmail("Seb", "Lumen", "Week 43", [
     {
-      theme: "Dedicated teams",
+      theme: "Choosing an approach",
       synthesis: "Passages [1] and [2] disagree. **Read [2] first this afternoon.**",
       citations: [
         { ref: 1, title: "Article A", author: "Author A", chapterTitle: null, url: "https://example.com/a" },

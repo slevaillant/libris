@@ -5,7 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
 import { parseTopicEntriesFromMd } from "./digest.functions";
-import { buildDigestEmail, sendEmail, type DigestSection } from "./email";
+import { sendEmail } from "./email";
+import { briefToText, buildWeeklyDigestEmail, type TopicBrief, type TopicReference } from "./weekly-email";
 import { embed } from "./gemini";
 import type { DiscoveredResource } from "./discovery";
 
@@ -15,6 +16,115 @@ const DIGEST_HOUR = 12;
 const STALE_TOPICS_DAYS = 6;
 // Generated chunk labels ("Key idea 2", "Section 3") mean nothing to a reader
 const CHUNK_LABEL = /^(key idea|section) \d+$/i;
+
+// ─── Topic brief (Opus, structured) ───────────────────────────────────────────
+
+const BRIEF_SYSTEM = (librarianName: string, displayName: string) => `You are ${librarianName}, writing ${displayName}'s weekly Friday deep-dive.
+${displayName} spends at most 15 minutes on this email to decide which 3–4 sources to read this afternoon.
+For each work challenge you get numbered library passages [n]. Write a scannable brief with the write_topic_brief tool.
+
+RULES:
+- Concise and precise: every bullet states one concrete idea from the passages — no filler, no hedging, no restating the question.
+- Only use what the passages say. Cite each idea with the [n] numbers it comes from.
+- "why" lines tell the reader what they will get from reading that source, so they can decide in seconds.
+- Recommend as read_first the single passage most useful for deciding on this challenge.
+- Write in English.`;
+
+const BRIEF_TOOL = {
+  name: "write_topic_brief" as const,
+  description: "Scannable brief connecting one work challenge to library passages",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      takeaway: { type: "string" as const, description: "The one thing to retain, in one sentence (max 25 words)" },
+      ideas: {
+        type: "array" as const,
+        minItems: 2,
+        maxItems: 4,
+        description: "Key ideas from the passages, one per bullet (max 25 words each)",
+        items: {
+          type: "object" as const,
+          properties: {
+            text: { type: "string" as const },
+            refs: { type: "array" as const, items: { type: "integer" as const }, description: "Passage numbers supporting this idea" },
+          },
+          required: ["text", "refs"],
+        },
+      },
+      tension: {
+        type: ["string", "null"] as const,
+        description: "Where passages disagree or a key caveat for this context (max 25 words), or null",
+      },
+      read_first: {
+        type: "object" as const,
+        properties: {
+          ref: { type: "integer" as const },
+          why: { type: "string" as const, description: "Why read this first, for this challenge (max 20 words)" },
+        },
+        required: ["ref", "why"],
+      },
+      source_notes: {
+        type: "array" as const,
+        description: "For each passage worth reading: what reading its source gives you (max 15 words)",
+        items: {
+          type: "object" as const,
+          properties: { ref: { type: "integer" as const }, why: { type: "string" as const } },
+          required: ["ref", "why"],
+        },
+      },
+    },
+    required: ["takeaway", "ideas", "tension", "read_first", "source_notes"],
+  },
+};
+
+type BriefInput = {
+  takeaway: string;
+  ideas: { text: string; refs: number[] }[];
+  tension: string | null;
+  read_first: { ref: number; why: string };
+  source_notes: { ref: number; why: string }[];
+};
+
+async function writeTopicBrief(
+  anthropic: Anthropic,
+  names: { librarianName: string; displayName: string },
+  topic: { title: string; query: string },
+  matched: MatchedChunk[],
+  references: TopicReference[],
+): Promise<Omit<TopicBrief, "discoveredResources">> {
+  const passages = matched
+    .map((c, j) => `[${j + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 600)}`)
+    .join("\n\n");
+  const res = await anthropic.messages.create({
+    model: "claude-opus-4-7",
+    max_tokens: 1024,
+    system: [{ type: "text", text: BRIEF_SYSTEM(names.librarianName, names.displayName), cache_control: { type: "ephemeral" } }],
+    tools: [BRIEF_TOOL],
+    tool_choice: { type: "tool", name: BRIEF_TOOL.name },
+    messages: [{ role: "user", content: `Challenge: "${topic.title}"\n\nQuestion: "${topic.query}"\n\nPassages:\n${passages}` }],
+  });
+  const toolUse = res.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") throw new Error("No brief returned");
+  const b = toolUse.input as BriefInput;
+
+  const valid = (r: number) => Number.isInteger(r) && r >= 1 && r <= references.length;
+  const ideas = (b.ideas ?? [])
+    .map((i) => ({ text: i.text, refs: (i.refs ?? []).filter(valid) }))
+    .filter((i) => i.text?.trim());
+  const notes = new Map((b.source_notes ?? []).filter((n) => valid(n.ref)).map((n) => [n.ref, n.why]));
+  const readFirst = b.read_first && valid(b.read_first.ref) ? b.read_first : null;
+  // Show only the passages the brief actually uses, in [n] order
+  const used = new Set<number>([...ideas.flatMap((i) => i.refs), ...notes.keys(), ...(readFirst ? [readFirst.ref] : [])]);
+
+  return {
+    theme: topic.title,
+    takeaway: b.takeaway,
+    ideas,
+    tension: b.tension?.trim() ? b.tension : null,
+    readFirst,
+    references: references.filter((r) => used.has(r.ref)).map((r) => ({ ...r, why: notes.get(r.ref) ?? null })),
+  };
+}
 
 // ─── Scheduling ───────────────────────────────────────────────────────────────
 
@@ -67,13 +177,15 @@ export type WeeklyDigestOptions = {
   now?: Date;
   /** Send even if this week's digest was already emailed (manual re-runs). */
   force?: boolean;
+  /** Build the email without sending it or writing to the database; receives the result. */
+  preview?: (email: { to: string; subject: string; html: string; text: string }) => void;
   log?: (msg: string) => void;
 };
 
 export async function runWeeklyDigest(
   supabase: SupabaseClient,
   anthropic: Anthropic,
-  { appUrl, now = new Date(), force = false, log = console.log }: WeeklyDigestOptions,
+  { appUrl, now = new Date(), force = false, log = console.log, preview }: WeeklyDigestOptions,
 ): Promise<void> {
   const { data: profiles } = await supabase
     .from("user_profiles")
@@ -89,7 +201,7 @@ export async function runWeeklyDigest(
 
   for (const p of profiles as DigestProfile[]) {
     try {
-      await runForProfile(supabase, anthropic, p, { appUrl, now, force, log });
+      await runForProfile(supabase, anthropic, p, { appUrl, now, force: force || Boolean(preview), log, preview });
     } catch (err) {
       console.error(`Weekly digest failed for user ${p.user_id}:`, err);
     }
@@ -100,7 +212,7 @@ async function runForProfile(
   supabase: SupabaseClient,
   anthropic: Anthropic,
   p: DigestProfile,
-  { appUrl, now, force, log }: Required<WeeklyDigestOptions>,
+  { appUrl, now, force, log, preview }: Required<Omit<WeeklyDigestOptions, "preview">> & Pick<WeeklyDigestOptions, "preview">,
 ): Promise<void> {
   const topics = parseTopicEntriesFromMd(p.topics_md);
   if (topics.length === 0) {
@@ -125,18 +237,20 @@ async function runForProfile(
   const displayName = p.display_name ?? "there";
   const librarianName = p.librarian_name ?? "Lumen";
 
-  const { data: run } = await supabase
-    .from("digest_runs")
-    .upsert(
-      { user_id: p.user_id, run_date: runDate, meetings_found: 1, themes_found: topics.length },
-      { onConflict: "user_id,run_date" },
-    )
-    .select("id")
-    .single();
-  const digestRunId = (run?.id as string) ?? crypto.randomUUID();
+  const { data: run } = preview
+    ? { data: null }
+    : await supabase
+        .from("digest_runs")
+        .upsert(
+          { user_id: p.user_id, run_date: runDate, meetings_found: 1, themes_found: topics.length },
+          { onConflict: "user_id,run_date" },
+        )
+        .select("id")
+        .single();
+  const digestRunId = (run?.id as string) ?? "preview";
   if (run?.id) await supabase.from("digest_themes").delete().eq("digest_run_id", digestRunId);
 
-  const sections: DigestSection[] = [];
+  const briefs: TopicBrief[] = [];
   let citationCount = 0;
 
   for (const [i, topic] of topics.entries()) {
@@ -161,49 +275,41 @@ async function runForProfile(
     }
     if (matched.length === 0 && !discovered.some((r) => r.ingested)) continue;
 
-    let synthesis = `My sources on "${topic.title}" are thinner than I'd like.`;
-    if (matched.length > 0) {
-      const passages = matched
-        .map((c, j) => `[${j + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 400)}`)
-        .join("\n\n");
-      const res = await anthropic.messages.create({
-        model: "claude-opus-4-7",
-        max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `You are ${librarianName}, writing ${displayName}'s weekly Friday deep-dive. They set Friday afternoon aside to dig into the critical work challenges of their week. Write one focused paragraph connecting this week's challenge to the library passages. Cite passages by their [n] number — the email lists them below your paragraph. End with what to read first this afternoon, and why, naming the book or article (and chapter) as well as its number.`,
-              cache_control: { type: "ephemeral" },
-            },
-            { type: "text", text: `Challenge: "${topic.title}"\n\nQuestion: "${topic.query}"\n\nPassages:\n${passages}` },
-          ],
-        }],
-      });
-      const tb = res.content.find((b) => b.type === "text");
-      if (tb?.type === "text") synthesis = tb.text;
-    }
-
-    // One numbered reference per passage, matching the [n] markers in the synthesis.
+    // One numbered reference per passage, matching the [n] markers in the brief.
     // Books have no external URL: link to their page in Libris.
-    const citations = matched.map((c, j) => ({
+    const references: TopicReference[] = matched.map((c, j) => ({
       ref: j + 1,
       title: c.title,
       author: c.author,
       chapterTitle: c.chapter_title && !CHUNK_LABEL.test(c.chapter_title) ? c.chapter_title : null,
       url: c.url ?? `${appUrl}/book/${c.source_id}`,
+      why: null,
     }));
-    citationCount += new Set(matched.map((c) => c.source_id)).size;
-    sections.push({
-      theme: topic.title,
-      synthesis,
-      citations,
-      readingSuggestion: null,
-      discoveredResources: discovered.length > 0 ? discovered : undefined,
-    });
 
-    await supabase.from("digest_themes").insert({
+    let brief: TopicBrief;
+    if (matched.length > 0) {
+      try {
+        brief = await writeTopicBrief(anthropic, { librarianName, displayName }, topic, matched, references);
+      } catch (err) {
+        console.error(`Weekly digest: brief failed for topic ${i + 1}:`, err);
+        continue;
+      }
+    } else {
+      brief = {
+        theme: topic.title,
+        takeaway: "Your library has little on this yet — new sources were added below.",
+        ideas: [],
+        tension: null,
+        readFirst: null,
+        references: [],
+      };
+    }
+    if (discovered.length > 0) brief.discoveredResources = discovered;
+    briefs.push(brief);
+    citationCount += new Set(brief.references.map((r) => r.url)).size;
+    const synthesis = briefToText(brief);
+
+    if (!preview) await supabase.from("digest_themes").insert({
       digest_run_id: digestRunId,
       user_id: p.user_id,
       theme_text: topic.title,
@@ -212,8 +318,8 @@ async function runForProfile(
     });
   }
 
-  await supabase.from("digest_runs").update({ citations_found: citationCount }).eq("id", digestRunId);
-  if (sections.length === 0) {
+  if (!preview) await supabase.from("digest_runs").update({ citations_found: citationCount }).eq("id", digestRunId);
+  if (briefs.length === 0) {
     log(`Weekly digest: no sections generated for user ${p.user_id}`);
     return;
   }
@@ -227,15 +333,20 @@ async function runForProfile(
 
   const dayLabel = now.toLocaleDateString("en-GB", { timeZone: DIGEST_TZ, weekday: "long", day: "numeric", month: "long" });
   const dateLabel = `Week ${isoWeek(now)} · ${dayLabel}`;
-  const { subject, html, text } = buildDigestEmail(
-    displayName, librarianName, dateLabel, sections, `${appUrl}/quiz/${digestRunId}`, { notice },
-  );
+  const { subject, html, text } = buildWeeklyDigestEmail(displayName, librarianName, dateLabel, briefs, {
+    quizUrl: `${appUrl}/quiz/${digestRunId}`,
+    notice,
+  });
+  if (preview) {
+    preview({ to: p.digest_email, subject, html, text });
+    return;
+  }
   const result = await sendEmail({ to: p.digest_email, subject, html, text });
 
   await supabase
     .from("digest_runs")
     .update({ email_sent: result.sent, email_sent_at: result.sent ? new Date().toISOString() : null })
     .eq("id", digestRunId);
-  log(`Weekly digest: user=${p.user_id} topics=${topics.length} sections=${sections.length} sent=${result.sent}`);
+  log(`Weekly digest: user=${p.user_id} topics=${topics.length} sections=${briefs.length} sent=${result.sent}`);
   if (!result.sent && result.error) console.error(`Weekly digest email failed: ${result.error}`);
 }
