@@ -55,6 +55,7 @@ type SourceDetail = {
   tags: string[];
   tocSource: string | null;
   tocSourceUrl: string | null;
+  fileUrl: string | null;
   createdAt: string;
 };
 
@@ -68,7 +69,17 @@ export const Route = createFileRoute("/_authenticated/book/$id")({
 
 // ─── Passage reader ───────────────────────────────────────────────────────────
 
-function PassageReader({ chunks, passageId, onNavigate }: { chunks: ChunkRow[]; passageId: string; onNavigate: (id: string | undefined) => void }) {
+function PassageReader({
+  chunks,
+  passageId,
+  fileUrl,
+  onNavigate,
+}: {
+  chunks: ChunkRow[];
+  passageId: string;
+  fileUrl: string | null;
+  onNavigate: (id: string | undefined) => void;
+}) {
   // Readable passages only: generated key ideas are not part of the text
   const readable = chunks.filter((c) => c.chunkType !== "key_idea");
   const index = readable.findIndex((c) => c.id === passageId);
@@ -89,12 +100,25 @@ function PassageReader({ chunks, passageId, onNavigate }: { chunks: ChunkRow[]; 
         <BookOpen className="h-3.5 w-3.5 text-indigo-500" />
         <p className="text-[11px] text-muted-foreground">
           {chunk.chapterTitle ? <span className="font-medium text-foreground">{chunk.chapterTitle} · </span> : null}
+          {chunk.pageNumber ? `Page ${chunk.pageNumber} · ` : null}
           Passage {index + 1} of {readable.length}
         </p>
+        {fileUrl && (
+          <a
+            href={fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-1 text-[11px] text-indigo-600 hover:underline dark:text-indigo-400"
+            title={chunk.pageNumber ? `Open the original file, then go to page ${chunk.pageNumber}` : "Open the original file"}
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open original{chunk.pageNumber ? ` (p. ${chunk.pageNumber})` : ""}
+          </a>
+        )}
         <button
           type="button"
           onClick={() => onNavigate(undefined)}
-          className="ml-auto text-muted-foreground hover:text-foreground"
+          className={cn("text-muted-foreground hover:text-foreground", !fileUrl && "ml-auto")}
           title="Close reader"
         >
           <X className="h-3.5 w-3.5" />
@@ -812,6 +836,17 @@ function BookDetail() {
                     </span>
                   </a>
                 )}
+                {data.source.fileUrl && (
+                  <a
+                    href={data.source.fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Open original file
+                  </a>
+                )}
                 <div className="flex items-center gap-2">
                   <StatusPill status={data.source.ingestStatus} />
                   <button
@@ -828,7 +863,9 @@ function BookDetail() {
               </div>
             </div>
 
-            {passage && <PassageReader chunks={data.chunks} passageId={passage} onNavigate={openPassage} />}
+            {passage && (
+              <PassageReader chunks={data.chunks} passageId={passage} fileUrl={data.source.fileUrl} onNavigate={openPassage} />
+            )}
 
             {data.source.description && (
               <p className="text-[11px] text-muted-foreground leading-relaxed">

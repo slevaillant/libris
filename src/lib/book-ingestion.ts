@@ -15,8 +15,41 @@ export type DigitalBookInput = {
   isbn?: string;
   coverUrl?: string;
   description?: string;
+  /** Link to the original file (e.g. Google Drive), shown as "Open original" in the reader. */
+  fileUrl?: string;
   chunks: { content: string; chapterTitle?: string | null; pageNumber?: number | null }[];
 };
+
+type PassageInput = { content: string; chapterTitle?: string | null; pageNumber?: number | null };
+
+function cleanPassages(chunks: PassageInput[]) {
+  return chunks
+    .map((c) => ({ ...c, content: stripNul(c.content), chapterTitle: c.chapterTitle ? stripNul(c.chapterTitle) : c.chapterTitle }))
+    .filter((c) => c.content.trim().length > 0);
+}
+
+async function embedAll(texts: string[]): Promise<(number[] | null)[]> {
+  const out: (number[] | null)[] = [];
+  for (let i = 0; i < texts.length; i += 100) {
+    const batch = texts.slice(i, i + 100);
+    out.push(...(await embedBatch(batch).catch(() => batch.map(() => null))));
+  }
+  return out;
+}
+
+const passageRows = (sourceId: string, userId: string, chunks: PassageInput[], embeddings: (number[] | null)[], start = 0) =>
+  chunks.map((chunk, i) => ({
+    source_id: sourceId,
+    user_id: userId,
+    chunk_index: start + i,
+    content: chunk.content,
+    chapter_title: chunk.chapterTitle ?? null,
+    page_number: chunk.pageNumber ?? null,
+    chunk_type: "passage",
+    embedding: embeddings[i] ? JSON.stringify(embeddings[i]) : null,
+    indexed_at: new Date().toISOString(),
+    token_count: Math.ceil(chunk.content.length / 4),
+  }));
 
 // ─── Chapter summaries (Haiku, prompt-cached) ─────────────────────────────────
 
@@ -170,9 +203,7 @@ export async function ingestDigitalBook(
   userId: string,
   data: DigitalBookInput,
 ): Promise<{ sourceId: string }> {
-  const chunks = data.chunks
-    .map((c) => ({ ...c, content: stripNul(c.content), chapterTitle: c.chapterTitle ? stripNul(c.chapterTitle) : c.chapterTitle }))
-    .filter((c) => c.content.trim().length > 0);
+  const chunks = cleanPassages(data.chunks);
   if (chunks.length === 0) throw new Error("No readable text found in this file");
 
   // Replace any earlier failed import of the same book
@@ -195,6 +226,7 @@ export async function ingestDigitalBook(
       isbn: data.isbn ?? null,
       cover_url: data.coverUrl ?? null,
       description: data.description ?? null,
+      file_url: data.fileUrl ?? null,
       ingest_status: "processing",
       authority_tier: 3,
     })
@@ -204,31 +236,9 @@ export async function ingestDigitalBook(
   if (sourceErr || !source) throw new Error(sourceErr?.message ?? "Failed to create source");
 
   try {
-    // 2. Embed in batches of 100
-    const { embedBatch } = await import("@/lib/gemini");
-    const BATCH = 100;
-    const allEmbeddings: (number[] | null)[] = [];
-
-    for (let i = 0; i < chunks.length; i += BATCH) {
-      const batch = chunks.slice(i, i + BATCH).map((c) => c.content);
-      const embeddings = await embedBatch(batch).catch(() => batch.map(() => null));
-      allEmbeddings.push(...embeddings);
-    }
-
-    // 3. Insert chunks
-    const chunkRows = chunks.map((chunk, i) => ({
-      source_id: source.id,
-      user_id: userId,
-      chunk_index: i,
-      content: chunk.content,
-      chapter_title: chunk.chapterTitle ?? null,
-      chunk_type: "passage",
-      embedding: allEmbeddings[i] ? JSON.stringify(allEmbeddings[i]) : null,
-      indexed_at: new Date().toISOString(),
-      token_count: Math.ceil(chunk.content.length / 4),
-    }));
-
-    await insertChunks(supabase, chunkRows);
+    // 2. Embed, 3. insert
+    const embeddings = await embedAll(chunks.map((c) => c.content));
+    await insertChunks(supabase, passageRows(source.id as string, userId, chunks, embeddings));
 
     // 4. Mark complete
     await supabase
@@ -248,4 +258,50 @@ export async function ingestDigitalBook(
       .eq("id", source.id);
     throw err;
   }
+}
+
+/**
+ * Replace a book's full-text passages with a fresh extraction (re-import from the
+ * original file). Highlights, chapter summaries and key ideas are kept. New passages
+ * are inserted before the old ones are deleted, so a failure never empties the book.
+ */
+export async function replaceBookPassages(
+  supabase: SupabaseClient,
+  userId: string,
+  sourceId: string,
+  passages: PassageInput[],
+  update: { fileUrl?: string; title?: string },
+): Promise<{ passages: number; missingEmbeddings: number }> {
+  const chunks = cleanPassages(passages);
+  if (chunks.length === 0) throw new Error("No readable text found in this file");
+
+  const { data: old } = await supabase.from("chunks").select("id").eq("source_id", sourceId).eq("chunk_type", "passage");
+  const { data: last } = await supabase
+    .from("chunks")
+    .select("chunk_index")
+    .eq("source_id", sourceId)
+    .order("chunk_index", { ascending: false })
+    .limit(1);
+  const start = last?.length ? (last[0].chunk_index as number) + 1 : 0;
+
+  const embeddings = await embedAll(chunks.map((c) => c.content));
+  await insertChunks(supabase, passageRows(sourceId, userId, chunks, embeddings, start));
+
+  const oldIds = (old ?? []).map((c) => c.id as string);
+  for (let i = 0; i < oldIds.length; i += 100) {
+    await supabase.from("chunks").delete().in("id", oldIds.slice(i, i + 100));
+  }
+
+  const { count } = await supabase.from("chunks").select("id", { count: "exact", head: true }).eq("source_id", sourceId);
+  await supabase
+    .from("sources")
+    .update({
+      total_chunks: count ?? chunks.length,
+      last_ingested: new Date().toISOString(),
+      ...(update.fileUrl ? { file_url: update.fileUrl } : {}),
+      ...(update.title ? { title: update.title } : {}),
+    })
+    .eq("id", sourceId);
+
+  return { passages: chunks.length, missingEmbeddings: embeddings.filter((e) => !e).length };
 }
