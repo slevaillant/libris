@@ -1,9 +1,10 @@
-import { createFileRoute, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useAuth } from "@/hooks/useAuth";
 import { getProfile, type UserProfile } from "@/lib/profile.functions";
 import { AppSidebar } from "@/components/AppSidebar";
+import { rememberAfterLogin, takeAfterLogin } from "@/lib/after-login";
 
 export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
@@ -14,7 +15,9 @@ const NO_SIDEBAR_ROUTES = ["/onboarding"];
 function AuthenticatedLayout() {
   const { session, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const router = useRouter();
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const href = useRouterState({ select: (s) => s.location.href });
   const fetchProfile = useServerFn(getProfile);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -22,14 +25,22 @@ function AuthenticatedLayout() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!session) { navigate({ to: "/login" }); return; }
+    if (!session) {
+      rememberAfterLogin(href);
+      navigate({ to: "/login" });
+      return;
+    }
 
     fetchProfile({})
       .then((p) => {
         setProfile(p);
         if (p && !p.onboardingCompleted && !path.startsWith("/onboarding")) {
           navigate({ to: "/onboarding" });
+          return;
         }
+        // Back to the page asked for before signing in (e.g. the quiz link in the digest)
+        const next = takeAfterLogin(window.location.search);
+        if (next && next !== href) router.history.push(next);
       })
       .catch(console.error)
       .finally(() => setProfileLoading(false));

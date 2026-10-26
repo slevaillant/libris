@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { peekAfterLogin } from "@/lib/after-login";
 
 export const Route = createFileRoute("/login")({
   component: Login,
@@ -23,9 +24,13 @@ function Login() {
     e.preventDefault();
     if (!email.trim()) return;
     setBusy(true);
+    const next = peekAfterLogin();
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: `${window.location.origin}/library` },
+      options: {
+        // Carry the page asked for in the link too, in case it opens in another browser
+        emailRedirectTo: `${window.location.origin}/library${next ? `?next=${encodeURIComponent(next)}` : ""}`,
+      },
     });
     setBusy(false);
     if (error) { toast.error(error.message); return; }
