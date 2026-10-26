@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -18,10 +18,12 @@ import {
   Sparkles,
   ExternalLink,
   Search,
+  ChevronLeft,
 } from "lucide-react";
 import { getSource, reembedSource, type ChunkRow } from "@/lib/sources.functions";
 import { extractTOCFromPhoto, findBookToc, replaceChapters } from "@/lib/library.functions";
 import type { TocSource } from "@/lib/toc";
+import { toParagraphs } from "@/lib/reading";
 import {
   createHighlight,
   listHighlights,
@@ -57,8 +59,63 @@ type SourceDetail = {
 };
 
 export const Route = createFileRoute("/_authenticated/book/$id")({
+  // ?passage=<chunkId> opens the reader on that passage (links from the weekly digest)
+  validateSearch: (search: Record<string, unknown>): { passage?: string } => ({
+    passage: typeof search.passage === "string" ? search.passage : undefined,
+  }),
   component: BookDetail,
 });
+
+// ─── Passage reader ───────────────────────────────────────────────────────────
+
+function PassageReader({ chunks, passageId, onNavigate }: { chunks: ChunkRow[]; passageId: string; onNavigate: (id: string | undefined) => void }) {
+  // Readable passages only: generated key ideas are not part of the text
+  const readable = chunks.filter((c) => c.chunkType !== "key_idea");
+  const index = readable.findIndex((c) => c.id === passageId);
+  const topRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    topRef.current?.scrollIntoView({ block: "start" });
+  }, [passageId]);
+
+  if (index === -1) return null;
+  const chunk = readable[index];
+  const prev = readable[index - 1];
+  const next = readable[index + 1];
+
+  return (
+    <section ref={topRef} className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4 space-y-3 scroll-mt-4">
+      <div className="flex items-center gap-2">
+        <BookOpen className="h-3.5 w-3.5 text-indigo-500" />
+        <p className="text-[11px] text-muted-foreground">
+          {chunk.chapterTitle ? <span className="font-medium text-foreground">{chunk.chapterTitle} · </span> : null}
+          Passage {index + 1} of {readable.length}
+        </p>
+        <button
+          type="button"
+          onClick={() => onNavigate(undefined)}
+          className="ml-auto text-muted-foreground hover:text-foreground"
+          title="Close reader"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <article className="space-y-3 font-serif text-[15px] leading-7 text-foreground">
+        {toParagraphs(chunk.content).map((p, i) => (
+          <p key={i}>{p}</p>
+        ))}
+      </article>
+      <div className="flex items-center justify-between pt-1">
+        <Button size="sm" variant="ghost" className="h-7 text-[11px]" disabled={!prev} onClick={() => prev && onNavigate(prev.id)}>
+          <ChevronLeft className="h-3 w-3" /> Previous passage
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 text-[11px]" disabled={!next} onClick={() => next && onNavigate(next.id)}>
+          Next passage <ChevronRight className="h-3 w-3" />
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 // ─── Table of contents panel ─────────────────────────────────────────────────
 
@@ -636,6 +693,10 @@ function ImportHighlightsPanel({
 
 function BookDetail() {
   const { id } = Route.useParams();
+  const { passage } = Route.useSearch();
+  const navigateTo = useNavigate({ from: Route.fullPath });
+  const openPassage = (passageId: string | undefined) =>
+    navigateTo({ search: { passage: passageId }, replace: true });
   const fetchSource = useServerFn(getSource);
   const fetchHighlights = useServerFn(listHighlights);
 
@@ -766,6 +827,8 @@ function BookDetail() {
                 </div>
               </div>
             </div>
+
+            {passage && <PassageReader chunks={data.chunks} passageId={passage} onNavigate={openPassage} />}
 
             {data.source.description && (
               <p className="text-[11px] text-muted-foreground leading-relaxed">
