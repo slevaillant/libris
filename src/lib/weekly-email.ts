@@ -36,7 +36,7 @@ const refTags = (refs: number[]) =>
   refs.length ? ` <span style="color:#9ca3af;font-size:11px;">${refs.map((r) => `[${r}]`).join("")}</span>` : "";
 
 const sourceLine = (r: TopicReference) =>
-  `<a href="${esc(r.url)}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${esc(r.title)}</a>` +
+  `<a href="${esc(r.url)}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;font-weight:600;">${esc(r.title)}</a>` +
   (r.author ? ` <span style="color:#6b7280;">— ${esc(r.author)}</span>` : "") +
   (r.chapterTitle ? ` <span style="color:#9ca3af;">· ${esc(r.chapterTitle)}</span>` : "");
 
@@ -82,7 +82,7 @@ export function buildWeeklyDigestEmail(
           </p>`,
           )
           .join("")}
-        ${quizUrl ? `<p style="margin:12px 0 0;"><a href="${esc(quizUrl)}" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-size:12px;font-weight:600;padding:8px 18px;border-radius:8px;">Then test yourself — quiz →</a></p>` : ""}
+        ${quizUrl ? `<p style="margin:12px 0 0;"><a href="${esc(quizUrl)}" target="_blank" rel="noopener" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-size:12px;font-weight:600;padding:8px 18px;border-radius:8px;">Then test yourself — quiz →</a></p>` : ""}
       </div>`
     : "";
 
@@ -114,7 +114,7 @@ export function buildWeeklyDigestEmail(
       ${
         t.discoveredResources?.length
           ? `<p style="font-size:12px;color:#6b7280;margin:10px 0 0;">📥 New in your library: ${t.discoveredResources
-              .map((d) => `<a href="${esc(d.url)}" style="color:#4f46e5;text-decoration:none;">${esc(d.title)}</a>`)
+              .map((d) => `<a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${esc(d.title)}</a>`)
               .join(" · ")}</p>`
           : ""
       }

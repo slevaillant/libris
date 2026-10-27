@@ -93,7 +93,7 @@ export function buildDigestEmail(
             <p style="font-size:12px;color:#374151;margin:4px 0;">
               ${c.ref ? `<span style="color:#6b7280;font-weight:600;">[${c.ref}]</span>` : c.url ? "🔗" : "📚"}
               ${c.url
-                ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
+                ? `<a href="${c.url}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
                 : `<strong>${c.title}</strong>`
               }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}${c.chapterTitle ? ` <span style="color:#9ca3af;">· ${c.chapterTitle}</span>` : ""}
             </p>`,
@@ -116,7 +116,7 @@ export function buildDigestEmail(
               ${s.discoveredResources.map((r) => {
                 const icon = r.sourceType === "youtube" ? "▶" : r.sourceType === "github" ? "⚙" : "🔗";
                 const badge = r.ingested ? "" : ` <span style="color:#9ca3af;font-size:10px;">(recommended)</span>`;
-                return `<p style="font-size:12px;color:#374151;margin:4px 0;">${icon} <a href="${r.url}" style="color:#4f46e5;text-decoration:none;">${r.title}</a>${badge}</p>`;
+                return `<p style="font-size:12px;color:#374151;margin:4px 0;">${icon} <a href="${r.url}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;">${r.title}</a>${badge}</p>`;
               }).join("")}
             </div>`
           : ""
@@ -142,7 +142,7 @@ export function buildDigestEmail(
           <p style="font-size:12px;color:#374151;margin:6px 0;">
             ${c.url ? "🔗" : "📚"}
             ${c.url
-              ? `<a href="${c.url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
+              ? `<a href="${c.url}" target="_blank" rel="noopener" style="color:#4f46e5;text-decoration:none;font-weight:600;">${c.title}</a>`
               : `<strong>${c.title}</strong>`
             }${c.author ? ` <span style="color:#6b7280;">— ${c.author}</span>` : ""}
           </p>`).join("")}
@@ -167,7 +167,7 @@ export function buildDigestEmail(
     ${quizUrl ? `
     <div style="border-top:1px solid #e5e7eb;margin-top:32px;padding-top:24px;text-align:center;">
       <p style="font-size:12px;color:#6b7280;margin:0 0 12px;">Ready to test your retention?</p>
-      <a href="${quizUrl}" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-size:12px;font-weight:600;padding:10px 24px;border-radius:8px;letter-spacing:0.01em;">
+      <a href="${quizUrl}" target="_blank" rel="noopener" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-size:12px;font-weight:600;padding:10px 24px;border-radius:8px;letter-spacing:0.01em;">
         Test your memory →
       </a>
     </div>` : ""}
