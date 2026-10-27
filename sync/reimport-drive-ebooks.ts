@@ -12,6 +12,7 @@
  *   --apply       replace passages of matched books
  *   --import-new  also import files that match no book (as new ebooks)
  *   --force       redo books already linked to their Drive file
+ *   --exclude     comma-separated filename substrings to leave out
  *
  * Reads SUPABASE_URL, SUPABASE_SERVICE_KEY and GEMINI_API_KEY from .env.local (or env).
  * Never prints book content.
@@ -44,6 +45,7 @@ const apply = process.argv.includes("--apply");
 const importNew = process.argv.includes("--import-new");
 const force = process.argv.includes("--force");
 const only = arg("--only")?.toLowerCase();
+const exclude = (arg("--exclude") ?? "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
 const dir =
   arg("--dir") ??
   path.join(os.homedir(), "Library/CloudStorage/GoogleDrive-sebastien.levaillant@gmail.com/My Drive/A garder/Pro/ebooks");
@@ -162,6 +164,7 @@ const counts = { matched: 0, replaced: 0, skipped: 0, unmatched: 0, imported: 0,
 for (const file of files) {
   const name = path.relative(dir, file);
   if (only && !name.toLowerCase().includes(only)) continue;
+  if (exclude.some((t) => name.toLowerCase().includes(t))) continue;
 
   let extracted: { title: string | null; author: string | null; chunks: { content: string; chapterTitle: string | null; pageNumber: number | null }[]; matchText: string };
   try {
