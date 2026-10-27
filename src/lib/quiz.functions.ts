@@ -125,6 +125,7 @@ export const generateQuizQuestions = createServerFn({ method: "POST" })
       .eq("digest_run_id", data.digestRunId)
       .eq("user_id", userId)
       .not("synthesis", "is", null)
+      .neq("theme_type", "tech_radar") // the radar pick is a reading reco, not quiz material
       .order("created_at")
       .limit(6);
 

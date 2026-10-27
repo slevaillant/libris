@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
 import { parseTopicEntriesFromMd } from "./digest.functions";
 import { sendEmail } from "./email";
-import { briefToText, buildWeeklyDigestEmail, type TopicBrief, type TopicReference } from "./weekly-email";
+import { briefToText, buildWeeklyDigestEmail, type RadarPick, type TopicBrief, type TopicReference } from "./weekly-email";
 import { embed } from "./gemini";
 import type { DiscoveredResource } from "./discovery";
 
@@ -16,6 +16,96 @@ const DIGEST_HOUR = 12;
 const STALE_TOPICS_DAYS = 6;
 // Generated chunk labels ("Key idea 2", "Section 3") mean nothing to a reader
 const CHUNK_LABEL = /^(key idea|section) \d+$/i;
+
+// ─── Tech radar (one reading pick per week, beyond the week's topics) ─────────
+
+// Standing interests of a product leader in tech — intentionally NOT derived from the week
+const RADAR_QUERY =
+  "frontier AI capabilities and acceleration, the future of software and SaaS under AI agents, service-as-software, product leadership through technological disruption";
+
+const RADAR_TOOL = {
+  name: "pick_radar" as const,
+  description: "Pick one source worth reading this week for a product leader in tech",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      pick: { type: "integer" as const, description: "1-based index of the chosen candidate" },
+      why: { type: "string" as const, description: "Why it matters right now for a product leader in tech (max 40 words), grounded in the excerpt" },
+    },
+    required: ["pick", "why"],
+  },
+};
+
+/**
+ * One reading recommendation per digest, tied to the standing stakes of leading product
+ * in tech rather than to the week's topics. Sources cited in this digest and all past
+ * radar picks (digest_themes.theme_type = 'tech_radar') are excluded, so it rotates.
+ */
+async function pickTechRadar(
+  supabase: SupabaseClient,
+  anthropic: Anthropic,
+  userId: string,
+  briefs: TopicBrief[],
+  appUrl: string,
+): Promise<RadarPick | null> {
+  const embedding = await embed(RADAR_QUERY).catch(() => null);
+  if (!embedding) return null;
+  const { data: chunks } = await supabase.rpc("match_chunks", {
+    p_user_id: userId,
+    p_query_embedding: `[${embedding.join(",")}]`,
+    p_match_count: 30,
+    p_min_score: 0.3,
+  });
+
+  const { data: past } = await supabase
+    .from("digest_themes")
+    .select("theme_text")
+    .eq("user_id", userId)
+    .eq("theme_type", "tech_radar");
+  const excluded = new Set<string>((past ?? []).map((r) => (r.theme_text as string).toLowerCase()));
+  for (const b of briefs) for (const r of b.references) excluded.add(r.title.toLowerCase());
+
+  // One candidate per source, best chunk first
+  const seen = new Set<string>();
+  const candidates: (MatchedChunk & { libUrl: string })[] = [];
+  for (const c of (chunks ?? []) as MatchedChunk[]) {
+    if (seen.has(c.source_id) || excluded.has(c.title.toLowerCase())) continue;
+    seen.add(c.source_id);
+    candidates.push({ ...c, libUrl: c.url ?? `${appUrl}/book/${c.source_id}?passage=${c.chunk_id}` });
+    if (candidates.length === 6) break;
+  }
+  if (candidates.length === 0) return null;
+
+  const res = await anthropic.messages.create({
+    model: "claude-opus-4-7",
+    max_tokens: 300,
+    system: [{
+      type: "text",
+      text: "You pick one weekly reading for a product leader in tech, from their own library. Choose the source whose excerpt speaks most to the standing stakes of the moment (AI acceleration, the future of software, leading product through disruption) — independent of any current project. Use the pick_radar tool only.",
+      cache_control: { type: "ephemeral" },
+    }],
+    tools: [RADAR_TOOL],
+    tool_choice: { type: "tool", name: RADAR_TOOL.name },
+    messages: [{
+      role: "user",
+      content: candidates
+        .map((c, i) => `[${i + 1}] ${c.title}${c.author ? ` — ${c.author}` : ""}\n${c.content.slice(0, 350)}`)
+        .join("\n\n"),
+    }],
+  });
+  const toolUse = res.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") return null;
+  const { pick, why } = toolUse.input as { pick: number; why: string };
+  const chosen = candidates[pick - 1] ?? candidates[0];
+  if (!why?.trim()) return null;
+  return {
+    title: chosen.title,
+    author: chosen.author,
+    chapterTitle: chosen.chapter_title && !CHUNK_LABEL.test(chosen.chapter_title) ? chosen.chapter_title : null,
+    url: chosen.libUrl,
+    why,
+  };
+}
 
 // ─── Topic brief (Opus, structured) ───────────────────────────────────────────
 
@@ -331,11 +421,27 @@ async function runForProfile(
     ? `Heads-up: your topics haven't been synced for ${staleDays === null ? "a while" : `${staleDays} days`} — check the TOPICS.md routine and sync.`
     : undefined;
 
+  // Weekly reading pick, beyond this week's topics
+  const radar = await pickTechRadar(supabase, anthropic, p.user_id, briefs, appUrl).catch((err) => {
+    console.error("Weekly digest: tech radar failed:", err);
+    return null;
+  });
+  if (radar && !preview) {
+    await supabase.from("digest_themes").insert({
+      digest_run_id: digestRunId,
+      user_id: p.user_id,
+      theme_text: radar.title,
+      theme_type: "tech_radar",
+      synthesis: radar.why,
+    });
+  }
+
   const dayLabel = now.toLocaleDateString("en-GB", { timeZone: DIGEST_TZ, weekday: "long", day: "numeric", month: "long" });
   const dateLabel = `Week ${isoWeek(now)} · ${dayLabel}`;
   const { subject, html, text } = buildWeeklyDigestEmail(displayName, librarianName, dateLabel, briefs, {
     quizUrl: `${appUrl}/quiz/${digestRunId}`,
     notice,
+    radar: radar ?? undefined,
   });
   if (preview) {
     preview({ to: p.digest_email, subject, html, text });
