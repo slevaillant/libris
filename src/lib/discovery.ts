@@ -183,11 +183,13 @@ export async function ingestDiscoveredUrl(
 
     if (rawChunks.length === 0) return base;
 
-    const { data: source } = await supabase
+    const { data: source, error: sourceErr } = await supabase
       .from("sources")
       .insert({
         user_id: userId,
-        source_type: sourceType === "youtube" ? "youtube" : sourceType === "github" ? "github" : "article",
+        // DB check constraint only allows the app's canonical types: videos and
+        // articles are 'web_article', repos are 'github_repo'
+        source_type: sourceType === "github" ? "github_repo" : "web_article",
         title,
         author,
         url: resource.url,
@@ -197,7 +199,10 @@ export async function ingestDiscoveredUrl(
       .select("id")
       .single();
 
-    if (!source) return base;
+    if (!source) {
+      console.error(`[discovery] source insert failed for ${resource.url}: ${sourceErr?.message ?? "unknown"}`);
+      return base;
+    }
 
     const { embedBatch } = await import("./gemini");
     const embeddings = await embedBatch(rawChunks.map((c) => c.content)).catch(() => rawChunks.map(() => null));
