@@ -1,8 +1,10 @@
 import JSZip from "jszip";
+import { chunkParagraphs, type Paragraph } from "./paragraphs";
 
 export type EpubChunk = {
   content: string;
   chapterTitle: string | null;
+  pageNumber: number | null;
 };
 
 export type EpubExtractResult = {
@@ -10,6 +12,8 @@ export type EpubExtractResult = {
   author: string | null;
   isbn: string | null;
   chunks: EpubChunk[];
+  /** Whitespace-collapsed text, as the previous extractor produced it — used to match re-imports. */
+  matchText: string;
 };
 
 function xmlText(doc: Document, ...selectors: string[]): string | null {
@@ -20,33 +24,22 @@ function xmlText(doc: Document, ...selectors: string[]): string | null {
   return null;
 }
 
-function htmlToText(html: string): string {
+const BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, dt, dd, figcaption";
+
+/** A spine document as paragraphs (leaf block elements), its first heading, and its flat text. */
+function htmlToParagraphs(html: string): { paragraphs: string[]; heading: string | null; flat: string } {
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll("script, style, head").forEach((el) => el.remove());
-  return (doc.body?.textContent ?? "").replace(/\s+/g, " ").trim();
-}
+  const flat = (doc.body?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim();
 
-function chunkText(text: string, chapterTitle: string | null): EpubChunk[] {
-  const paragraphs = text
-    .split(/\s{3,}/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 40);
+  // Leaf blocks only, so a <li><p>…</p></li> is not read twice
+  const blocks = Array.from(doc.body?.querySelectorAll(BLOCKS) ?? []).filter((el) => !el.querySelector(BLOCKS));
+  const paragraphs = blocks.map((el) => squash(el.textContent)).filter(Boolean);
+  const heading = squash(doc.body?.querySelector("h1, h2, h3")?.textContent ?? null) || null;
 
-  const chunks: EpubChunk[] = [];
-  let buffer = "";
-
-  for (const para of paragraphs) {
-    const candidate = buffer ? `${buffer}\n\n${para}` : para;
-    if (Math.ceil(candidate.length / 4) > 600 && buffer) {
-      chunks.push({ content: buffer, chapterTitle });
-      buffer = para;
-    } else {
-      buffer = candidate;
-    }
-  }
-  if (buffer.trim()) chunks.push({ content: buffer, chapterTitle });
-
-  return chunks;
+  // No block markup at all (plain <div>s): fall back to the flat text
+  return { paragraphs: paragraphs.length ? paragraphs : flat ? [flat] : [], heading, flat };
 }
 
 export async function extractEpub(file: File): Promise<EpubExtractResult> {
@@ -108,8 +101,9 @@ export async function extractEpub(file: File): Promise<EpubExtractResult> {
     }
   }
 
-  // 5. Walk the spine and extract text per chapter
-  const chunks: EpubChunk[] = [];
+  // 5. Walk the spine and extract paragraphs per chapter
+  const paragraphs: Paragraph[] = [];
+  const flatParts: string[] = [];
 
   const spineItemrefs = Array.from(opfDoc.querySelectorAll("spine itemref"));
   for (const itemref of spineItemrefs) {
@@ -123,14 +117,14 @@ export async function extractEpub(file: File): Promise<EpubExtractResult> {
     const html = await zip.file(filePath)?.async("text").catch(() => null);
     if (!html) continue;
 
-    const text = htmlToText(html);
-    if (text.length < 80) continue; // skip near-empty files (TOC pages, covers)
+    const doc = htmlToParagraphs(html);
+    if (doc.flat.length < 80) continue; // skip near-empty files (TOC pages, covers)
+    flatParts.push(doc.flat);
 
     const basename = href.split("/").pop() ?? href;
-    const chapterTitle = chapterTitles.get(basename) ?? chapterTitles.get(href) ?? null;
-
-    chunks.push(...chunkText(text, chapterTitle));
+    const chapterTitle = chapterTitles.get(basename) ?? chapterTitles.get(href) ?? doc.heading;
+    for (const text of doc.paragraphs) paragraphs.push({ text, chapterTitle, pageNumber: null });
   }
 
-  return { title, author, isbn, chunks };
+  return { title, author, isbn, chunks: chunkParagraphs(paragraphs), matchText: flatParts.join(" ") };
 }

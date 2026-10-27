@@ -416,6 +416,7 @@ export type Database = {
           cover_url: string | null
           created_at: string
           description: string | null
+          file_url: string | null
           id: string
           ingest_error: string | null
           ingest_status: string
@@ -442,6 +443,7 @@ export type Database = {
           cover_url?: string | null
           created_at?: string
           description?: string | null
+          file_url?: string | null
           id?: string
           ingest_error?: string | null
           ingest_status?: string
@@ -468,6 +470,7 @@ export type Database = {
           cover_url?: string | null
           created_at?: string
           description?: string | null
+          file_url?: string | null
           id?: string
           ingest_error?: string | null
           ingest_status?: string

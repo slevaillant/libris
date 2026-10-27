@@ -75,7 +75,7 @@ export const getSource = createServerFn({ method: "POST" })
 
     const { data: chunks } = await supabase
       .from("chunks")
-      .select("id, chunk_index, chapter_title, content, chunk_type")
+      .select("id, chunk_index, chapter_title, page_number, content, chunk_type")
       .eq("source_id", data.sourceId)
       .order("chunk_index", { ascending: true });
 
@@ -97,6 +97,7 @@ export const getSource = createServerFn({ method: "POST" })
         tags: source.tags as string[],
         tocSource: (source.toc_source as string | null) ?? null,
         tocSourceUrl: (source.toc_source_url as string | null) ?? null,
+        fileUrl: (source.file_url as string | null) ?? null,
         createdAt: source.created_at,
       },
       chunks: (chunks ?? []).map(
@@ -104,6 +105,7 @@ export const getSource = createServerFn({ method: "POST" })
           id: c.id,
           chunkIndex: c.chunk_index,
           chapterTitle: c.chapter_title,
+          pageNumber: c.page_number,
           content: c.content,
           chunkType: c.chunk_type,
         }),

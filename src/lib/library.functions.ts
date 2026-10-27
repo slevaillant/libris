@@ -45,6 +45,7 @@ export type ChunkRow = {
   id: string;
   chunkIndex: number;
   chapterTitle: string | null;
+  pageNumber: number | null;
   content: string;
   chunkType: string;
 };
@@ -438,7 +439,7 @@ export const getSource = createServerFn({ method: "POST" })
 
     const { data: chunks } = await supabase
       .from("chunks")
-      .select("id, chunk_index, chapter_title, content, chunk_type")
+      .select("id, chunk_index, chapter_title, page_number, content, chunk_type")
       .eq("source_id", data.sourceId)
       .order("chunk_index", { ascending: true });
 
@@ -464,6 +465,7 @@ export const getSource = createServerFn({ method: "POST" })
           id: c.id,
           chunkIndex: c.chunk_index,
           chapterTitle: c.chapter_title,
+          pageNumber: c.page_number,
           content: c.content,
           chunkType: c.chunk_type,
         }),
