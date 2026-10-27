@@ -194,9 +194,14 @@ for (const file of files) {
     const title = extracted.title && !isJunkTitle(extracted.title) ? extracted.title : fileTitle(file);
     console.log(`? ${name} — no matching book (${stats})${importNew ? "" : " · use --import-new"}`);
     if (apply && importNew) {
-      await ingestDigitalBook(supabase, userId, { title, author: extracted.author ?? undefined, fileUrl, chunks: extracted.chunks });
-      counts.imported++;
-      console.log(`  ✓ imported as "${title}"`);
+      try {
+        await ingestDigitalBook(supabase, userId, { title, author: extracted.author ?? undefined, fileUrl, chunks: extracted.chunks });
+        counts.imported++;
+        console.log(`  ✓ imported as "${title}"`);
+      } catch (err) {
+        counts.failed++;
+        console.log(`  ✗ ${err instanceof Error ? err.message : err}`);
+      }
     }
     continue;
   }
