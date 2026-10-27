@@ -45,6 +45,28 @@ describe("buildWeeklyDigestEmail", () => {
   });
 });
 
+describe("buildWeeklyDigestEmail — tech radar", () => {
+  const radar = {
+    title: "Situational <Awareness>",
+    author: "An Author",
+    chapterTitle: null,
+    url: "https://app.example/book/x?passage=y",
+    why: "The clearest map of the decade ahead for anyone shipping software.",
+  };
+  const { html, text } = buildWeeklyDigestEmail("Seb", "Lumen", "Week 44", [brief], { radar });
+
+  it("renders the Beyond this week block after the topics, escaped", () => {
+    expect(html.indexOf("Beyond this week")).toBeGreaterThan(html.indexOf(brief.theme));
+    expect(html).toContain("Situational &lt;Awareness&gt;");
+    expect(html).toContain("The clearest map of the decade ahead");
+    expect(text).toContain("BEYOND THIS WEEK");
+  });
+
+  it("is absent when no radar pick is given", () => {
+    expect(buildWeeklyDigestEmail("Seb", "Lumen", "W", [brief], {}).html).not.toContain("Beyond this week");
+  });
+});
+
 describe("briefToText", () => {
   it("keeps takeaway, bullets and tension for the quiz", () => {
     expect(briefToText(brief).split("\n")).toHaveLength(4);

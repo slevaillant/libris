@@ -11,6 +11,14 @@ export type TopicReference = {
   why: string | null; // what reading this passage's source gives you
 };
 
+export type RadarPick = {
+  title: string;
+  author: string | null;
+  chapterTitle: string | null;
+  url: string;
+  why: string; // why this matters now for a product leader — not tied to the week
+};
+
 export type TopicBrief = {
   theme: string;
   takeaway: string;
@@ -48,7 +56,7 @@ export function buildWeeklyDigestEmail(
   librarianName: string,
   date: string,
   topics: TopicBrief[],
-  { quizUrl, notice }: { quizUrl?: string; notice?: string } = {},
+  { quizUrl, notice, radar }: { quizUrl?: string; notice?: string; radar?: RadarPick } = {},
 ): { subject: string; html: string; text: string } {
   const subject = `Friday deep-dive — ${date}`;
 
@@ -114,6 +122,14 @@ export function buildWeeklyDigestEmail(
     )
     .join("");
 
+  const radarHtml = radar
+    ? `<div style="border-top:1px solid #e5e7eb;padding:20px 0;">
+        ${label("🧭 Beyond this week")}
+        <p style="font-size:13px;line-height:1.55;margin:0 0 6px;">${sourceLine({ ...radar, ref: 0, why: null })}</p>
+        <p style="font-size:13px;line-height:1.55;color:#374151;margin:0;">${esc(radar.why)}</p>
+      </div>`
+    : "";
+
   const html = `
   <!DOCTYPE html>
   <html>
@@ -123,6 +139,7 @@ export function buildWeeklyDigestEmail(
     ${notice ? `<p style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin:0 0 20px;">${esc(notice)}</p>` : ""}
     ${readingListHtml}
     ${topicsHtml}
+    ${radarHtml}
     <div style="border-top:1px solid #e5e7eb;margin-top:12px;padding-top:16px;">
       <p style="font-size:11px;color:#9ca3af;margin:0;">Libris · [n] numbers point to the passages listed under each topic.</p>
     </div>
@@ -136,6 +153,7 @@ export function buildWeeklyDigestEmail(
           .map(({ topic, ref }, i) => `${i + 1}. ${ref.title}${ref.author ? ` — ${ref.author}` : ""}\n   ${topic.readFirst!.why}\n   ${ref.url}`)
           .join("\n")}${quizUrl ? `\n\nQuiz: ${quizUrl}` : ""}`
       : null,
+    radar ? `BEYOND THIS WEEK\n${radar.title}${radar.author ? ` — ${radar.author}` : ""}\n${radar.why}\n${radar.url}` : null,
     ...topics.map(
       (t) =>
         `${t.theme.toUpperCase()}\n\n${briefToText(t)}\n\n${t.references
