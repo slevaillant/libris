@@ -150,9 +150,22 @@ export const generateQuizQuestions = createServerFn({ method: "POST" })
     }
 
     // Generate one question per theme (parallel, Haiku)
+    // The digest stores one reference per cited passage; the quiz only needs
+    // one line per work, so keep each source's first passage.
+    const dedupe = (sources: QuizSource[]): QuizSource[] => {
+      const seen = new Set<string>();
+      return sources
+        .filter((s) => {
+          const key = `${s.title}|${s.author ?? ""}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((s, i) => ({ ...s, ref: i + 1 }));
+    };
     const results = await Promise.all(
       (themes as unknown as { id: string; theme_text: string; synthesis: string | null; sources?: QuizSource[] | null }[]).map((t) =>
-        generateQuestionForTheme(anthropic, t.theme_text, t.synthesis ?? "", t.sources ?? []),
+        generateQuestionForTheme(anthropic, t.theme_text, t.synthesis ?? "", dedupe(t.sources ?? [])),
       ),
     );
 

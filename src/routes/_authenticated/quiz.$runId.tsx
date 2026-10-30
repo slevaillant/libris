@@ -205,7 +205,7 @@ function QuestionCard({
             <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
               {question.sources.map((src) => (
                 <p key={src.ref} className="text-[13px] leading-relaxed">
-                  <span className="text-muted-foreground">[{src.ref}]</span>{" "}
+                  <span className="text-muted-foreground">·</span>{" "}
                   <a
                     href={src.url}
                     target="_blank"
