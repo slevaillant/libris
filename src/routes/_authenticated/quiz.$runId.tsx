@@ -29,10 +29,10 @@ function ResultScreen({
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
       <div className="space-y-1">
         <p className="text-3xl font-semibold tabular-nums">{correct}/{total}</p>
-        <p className="text-sm text-muted-foreground">{pct}% correct</p>
+        <p className="text-base text-muted-foreground">{pct}% correct</p>
       </div>
 
-      <p className="text-xs text-muted-foreground max-w-xs">
+      <p className="text-sm text-muted-foreground max-w-xs">
         {pct === 100
           ? "Perfect — you absorbed every insight from today's digest."
           : pct >= 60
@@ -59,14 +59,14 @@ function ResultScreen({
                 ) : (
                   <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive mt-0.5" />
                 )}
-                <p className="text-[11px] font-medium leading-snug">{q.question}</p>
+                <p className="text-sm font-medium leading-snug">{q.question}</p>
               </div>
               {!isCorrect && correctOption && (
-                <p className="text-[10px] text-muted-foreground pl-5">
+                <p className="text-[13px] text-muted-foreground pl-5">
                   Correct: {correctOption.text}
                 </p>
               )}
-              <p className="text-[10px] text-muted-foreground/70 pl-5 italic">{q.explanation}</p>
+              <p className="text-[13px] text-muted-foreground/70 pl-5 italic">{q.explanation}</p>
             </div>
           );
         })}
@@ -115,10 +115,10 @@ function QuestionCard({
       {/* Progress */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <p className="text-[9px] font-medium uppercase tracking-widest text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             {question.theme}
           </p>
-          <p className="text-[9px] text-muted-foreground/50">
+          <p className="text-[11px] text-muted-foreground/50">
             {index + 1} / {total}
           </p>
         </div>
@@ -131,7 +131,7 @@ function QuestionCard({
       </div>
 
       {/* Question */}
-      <p className="text-sm font-medium leading-snug">{question.question}</p>
+      <p className="text-lg font-medium leading-snug">{question.question}</p>
 
       {/* Options */}
       <div className="flex flex-col gap-2">
@@ -153,7 +153,7 @@ function QuestionCard({
               disabled={revealed}
               onClick={() => pick(opt.id)}
               className={cn(
-                "flex items-center gap-3 rounded-xl border px-4 py-3 text-left text-xs leading-snug transition-all",
+                "flex items-center gap-3 rounded-xl border px-4 py-3 text-left text-base leading-snug transition-all",
                 variant === "neutral" &&
                   "border-border bg-card hover:bg-accent/50 hover:border-foreground/20 active:scale-[0.99] cursor-pointer",
                 variant === "correct" && "border-green-500/60 bg-green-500/10 text-green-700 dark:text-green-400",
@@ -163,7 +163,7 @@ function QuestionCard({
             >
               <span
                 className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[9px] font-semibold uppercase",
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold uppercase",
                   variant === "neutral" && "border-border text-muted-foreground",
                   variant === "correct" && "border-green-500/60 text-green-600 dark:text-green-400",
                   variant === "wrong" && "border-destructive/60 text-destructive",
@@ -181,7 +181,7 @@ function QuestionCard({
       {/* Explanation + next */}
       {revealed && (
         <div className="space-y-3">
-          <p className="text-[11px] text-muted-foreground leading-relaxed italic">
+          <p className="text-sm text-muted-foreground leading-relaxed italic">
             {question.explanation}
           </p>
           <Button
@@ -249,19 +249,19 @@ function QuizPage() {
           ← Digest
         </Link>
         <span className="text-muted-foreground/30">|</span>
-        <h1 className="text-xs font-medium">Memory check</h1>
+        <h1 className="text-sm font-medium">Memory check</h1>
       </header>
 
       {loading && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <p className="text-xs">Generating questions…</p>
+          <p className="text-sm">Generating questions…</p>
         </div>
       )}
 
       {error && (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-          <p className="text-xs text-destructive">{error}</p>
+          <p className="text-sm text-destructive">{error}</p>
           <Button variant="outline" size="sm" onClick={loadQuestions} className="text-xs">
             Try again
           </Button>
