@@ -67,6 +67,23 @@ function ResultScreen({
                 </p>
               )}
               <p className="text-[13px] text-muted-foreground/70 pl-5 italic">{q.explanation}</p>
+              {q.sources.length > 0 && (
+                <p className="text-[13px] pl-5">
+                  {q.sources.map((src, i) => (
+                    <span key={src.ref}>
+                      {i > 0 && <span className="text-muted-foreground/50"> · </span>}
+                      <a
+                        href={src.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 hover:underline dark:text-indigo-400"
+                      >
+                        {src.title}
+                      </a>
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
           );
         })}
@@ -184,6 +201,25 @@ function QuestionCard({
           <p className="text-sm text-muted-foreground leading-relaxed italic">
             {question.explanation}
           </p>
+          {question.sources.length > 0 && (
+            <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
+              {question.sources.map((src) => (
+                <p key={src.ref} className="text-[13px] leading-relaxed">
+                  <span className="text-muted-foreground">[{src.ref}]</span>{" "}
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                  >
+                    {src.title}
+                  </a>
+                  {src.author && <span className="text-muted-foreground"> — {src.author}</span>}
+                  {src.chapterTitle && <span className="text-muted-foreground/70"> · {src.chapterTitle}</span>}
+                </p>
+              ))}
+            </div>
+          )}
           <Button
             size="sm"
             className="gap-1.5 text-xs"
@@ -270,6 +306,7 @@ function QuizPage() {
 
       {!loading && !error && questions && !done && (
         <QuestionCard
+          key={questions[currentIndex].id}
           question={questions[currentIndex]}
           index={currentIndex}
           total={questions.length}

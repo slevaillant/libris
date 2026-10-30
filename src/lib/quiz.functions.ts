@@ -7,6 +7,14 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 export type QuizOption = { id: string; text: string };
 
+export type QuizSource = {
+  ref: number;
+  title: string;
+  author: string | null;
+  chapterTitle: string | null;
+  url: string;
+};
+
 export type QuizQuestion = {
   id: string;
   theme: string;
@@ -14,6 +22,7 @@ export type QuizQuestion = {
   options: QuizOption[];
   correctOptionId: string;
   explanation: string;
+  sources: QuizSource[];
 };
 
 // ─── Haiku tool schema ────────────────────────────────────────────────────────
@@ -59,6 +68,7 @@ async function generateQuestionForTheme(
   anthropic: Anthropic,
   theme: string,
   synthesis: string,
+  sources: QuizSource[],
 ): Promise<QuizQuestion | null> {
   try {
     const res = await anthropic.messages.create({
@@ -101,6 +111,7 @@ async function generateQuestionForTheme(
       options,
       correctOptionId,
       explanation: raw.explanation,
+      sources,
     };
   } catch {
     return null;
@@ -119,15 +130,19 @@ export const generateQuizQuestions = createServerFn({ method: "POST" })
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     // Verify the run belongs to this user and fetch its themes
-    const { data: themes, error } = await supabase
-      .from("digest_themes")
-      .select("id, theme_text, synthesis")
-      .eq("digest_run_id", data.digestRunId)
-      .eq("user_id", userId)
-      .not("synthesis", "is", null)
-      .neq("theme_type", "tech_radar") // the radar pick is a reading reco, not quiz material
-      .order("created_at")
-      .limit(6);
+    const themeQuery = (cols: string) =>
+      supabase
+        .from("digest_themes")
+        .select(cols)
+        .eq("digest_run_id", data.digestRunId)
+        .eq("user_id", userId)
+        .not("synthesis", "is", null)
+        .neq("theme_type", "tech_radar") // the radar pick is a reading reco, not quiz material
+        .order("created_at")
+        .limit(6);
+    // sources column may not be migrated yet: fall back to the old shape
+    let { data: themes, error } = await themeQuery("id, theme_text, synthesis, sources");
+    if (error) ({ data: themes, error } = await themeQuery("id, theme_text, synthesis"));
 
     if (error) throw new Error(error.message);
     if (!themes || themes.length === 0) {
@@ -136,8 +151,8 @@ export const generateQuizQuestions = createServerFn({ method: "POST" })
 
     // Generate one question per theme (parallel, Haiku)
     const results = await Promise.all(
-      (themes as { id: string; theme_text: string; synthesis: string | null }[]).map((t) =>
-        generateQuestionForTheme(anthropic, t.theme_text, t.synthesis ?? ""),
+      (themes as unknown as { id: string; theme_text: string; synthesis: string | null; sources?: QuizSource[] | null }[]).map((t) =>
+        generateQuestionForTheme(anthropic, t.theme_text, t.synthesis ?? "", t.sources ?? []),
       ),
     );
 

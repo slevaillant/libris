@@ -399,13 +399,22 @@ async function runForProfile(
     citationCount += new Set(brief.references.map((r) => r.url)).size;
     const synthesis = briefToText(brief);
 
-    if (!preview) await supabase.from("digest_themes").insert({
-      digest_run_id: digestRunId,
-      user_id: p.user_id,
-      theme_text: topic.title,
-      theme_type: "topic",
-      synthesis,
-    });
+    if (!preview) {
+      const themeRow = {
+        digest_run_id: digestRunId,
+        user_id: p.user_id,
+        theme_text: topic.title,
+        theme_type: "topic",
+        synthesis,
+      };
+      const sources = brief.references.map(({ ref, title, author, chapterTitle, url }) => ({ ref, title, author, chapterTitle, url }));
+      const { error: themeErr } = await supabase.from("digest_themes").insert({ ...themeRow, sources });
+      if (themeErr) {
+        // sources column not migrated yet: keep the digest working without it
+        console.error(`Weekly digest: theme insert with sources failed (${themeErr.message}) — retrying without`);
+        await supabase.from("digest_themes").insert(themeRow);
+      }
+    }
   }
 
   if (!preview) await supabase.from("digest_runs").update({ citations_found: citationCount }).eq("id", digestRunId);
